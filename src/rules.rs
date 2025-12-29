@@ -1,7 +1,5 @@
-//! Attack Graph Rules Implementation
-//!
-//! This module translates MulVAL-style logical rules into differential dataflow
-//! operators (map, filter, join, iterate).
+// Attack graph rules implementation
+// Translates MulVAL-style Datalog rules into differential dataflow operators
 
 use differential_dataflow::collection::Collection;
 use differential_dataflow::operators::iterate::Iterate;
@@ -12,236 +10,211 @@ use timely::dataflow::Scope;
 
 use crate::schema::*;
 
-/// Builds the complete attack graph dataflow.
-///
-/// # Arguments
-/// * `vulnerabilities` - Collection of known vulnerabilities
-/// * `network_access` - Collection of network connectivity facts
-/// * `firewall_deny_rules` - Collection of firewall deny rules
-/// * `attacker_locations` - Collection of initial attacker positions
-/// * `attacker_goals` - Collection of attacker objectives
-///
-/// # Returns
-/// A tuple of derived collections: (exec_code, owns_machine, goals_reached)
+// Main function that builds the attack graph dataflow
+// Takes input collections and returns derived collections
 pub fn build_attack_graph<G>(
-    vulnerabilities: &Collection<G, Vulnerability>,
-    network_access: &Collection<G, NetworkAccess>,
-    firewall_deny_rules: &Collection<G, FirewallRule>,
-    attacker_locations: &Collection<G, AttackerLocation>,
-    attacker_goals: &Collection<G, AttackerGoal>,
+    vulnerability_collection: &Collection<G, VulnerabilityRecord>,
+    network_access_collection: &Collection<G, NetworkAccessRule>,
+    firewall_rules_collection: &Collection<G, FirewallRuleRecord>,
+    attacker_positions_collection: &Collection<G, AttackerStartingPosition>,
+    attacker_goals_collection: &Collection<G, AttackerTargetGoal>,
 ) -> (
-    Collection<G, ExecCode>,
-    Collection<G, OwnsMachine>,
-    Collection<G, GoalReached>,
+    Collection<G, AttackerCodeExecution>,
+    Collection<G, AttackerOwnsMachine>,
+    Collection<G, AttackerGoalReached>,
 )
 where
     G: Scope,
     G::Timestamp: differential_dataflow::lattice::Lattice + Ord,
 {
-    // ========================================================================
-    // RULE 0: Compute effective network access
-    // ========================================================================
-    // effective_access(Src, Dst, Service) :-
-    //     network_access(Src, Dst, Service),
-    //     NOT firewall_deny(Src, Dst, Service).
+    // Step 1: Compute effective network access by removing blocked connections
+    // effective_access = network_access - blocked_by_firewall
     
-    // Key the network access by (src, dst, service) for anti-join
-    // antijoin expects Collection<G, K> not Collection<G, (K, V)>
-    let network_keyed = network_access
-        .map(|na| ((na.src_host.clone(), na.dst_host.clone(), na.service.clone()), na));
+    // Index network access by (source, destination, service) for the anti-join
+    let network_access_with_key = network_access_collection
+        .map(|network_rule| ((network_rule.source_host.clone(), network_rule.destination_host.clone(), network_rule.service_name.clone()), network_rule));
     
-    // For antijoin, we need just the keys (not key-value pairs)
-    let denied_keys = firewall_deny_rules
-        .filter(|rule| rule.action == FirewallAction::Deny)
-        .map(|rule| (rule.src.clone(), rule.dst.clone(), rule.service.clone()))
+    // Get the keys of all denied connections from firewall rules
+    let denied_connection_keys = firewall_rules_collection
+        .filter(|firewall_rule| firewall_rule.rule_action == FirewallRuleAction::Deny)
+        .map(|firewall_rule| (firewall_rule.source_zone.clone(), firewall_rule.destination_host.clone(), firewall_rule.service_name.clone()))
         .distinct();
     
-    // Anti-join: keep network access that is NOT denied
-    let effective_access = network_keyed
-        .antijoin(&denied_keys)
-        .map(|(_, na)| EffectiveAccess {
-            src_host: na.src_host,
-            dst_host: na.dst_host,
-            service: na.service,
+    // Remove denied connections using anti-join
+    let effective_network_access = network_access_with_key
+        .antijoin(&denied_connection_keys)
+        .map(|(_, original_rule)| EffectiveNetworkAccess {
+            source_host: original_rule.source_host,
+            destination_host: original_rule.destination_host,
+            service_name: original_rule.service_name,
         });
 
-    // ========================================================================
-    // RULE 1: Initial code execution from attacker location
-    // ========================================================================
-    // execCode(Attacker, Host, Privilege) :-
-    //     attackerLocated(Attacker, Host, Privilege).
+    // Step 2: Initial code execution comes from attacker starting positions
+    // execCode(attacker, host, privilege) :- attackerLocated(attacker, host, privilege)
     
-    let initial_exec = attacker_locations
-        .map(|loc| ExecCode {
-            attacker: loc.attacker,
-            host: loc.host,
-            privilege: loc.privilege,
+    let initial_code_execution = attacker_positions_collection
+        .map(|attacker_position| AttackerCodeExecution {
+            attacker_id: attacker_position.attacker_id,
+            compromised_host: attacker_position.starting_host,
+            obtained_privilege: attacker_position.initial_privilege,
         });
 
-    // ========================================================================
-    // RULE 2 & 3: Transitive attack propagation (with iteration)
-    // ========================================================================
-    // execCode(Attacker, DstHost, NewPriv) :-
-    //     execCode(Attacker, SrcHost, _),
-    //     effectiveAccess(SrcHost, DstHost, Service),
-    //     vulExists(DstHost, _, Service, NewPriv).
-    //
-    // This is a RECURSIVE rule - we need to iterate until fixpoint.
+    // Step 3: Compute transitive attack propagation using iteration
+    // This is the recursive rule:
+    // execCode(attacker, dst, priv) :-
+    //     execCode(attacker, src, _),
+    //     effectiveAccess(src, dst, service),
+    //     vulExists(dst, _, service, priv)
     
-    // Prepare effective access keyed by source host
-    let access_by_src = effective_access
-        .map(|ea| (ea.src_host.clone(), (ea.dst_host.clone(), ea.service.clone())));
+    // Prepare access collection indexed by source host
+    let network_access_by_source = effective_network_access
+        .map(|access| (access.source_host.clone(), (access.destination_host.clone(), access.service_name.clone())));
     
-    // Prepare vulnerabilities keyed by (host, service)
-    let vuln_by_host_service = vulnerabilities
-        .map(|v| ((v.host.clone(), v.service.clone()), v.grants_privilege.clone()));
+    // Prepare vulnerabilities indexed by (host, service)
+    let vulnerabilities_by_host_and_service = vulnerability_collection
+        .map(|vuln| ((vuln.host_name.clone(), vuln.affected_service.clone()), vuln.privilege_gained_on_exploit.clone()));
 
-    // Use iterate for recursive attack propagation
-    let exec_code = initial_exec.iterate(|inner_exec| {
+    // Iterate until no new code executions are found (fixpoint)
+    let all_code_executions = initial_code_execution.iterate(|current_executions| {
         // Bring external collections into the iteration scope
-        let access = access_by_src.enter(&inner_exec.scope());
-        let vulns = vuln_by_host_service.enter(&inner_exec.scope());
+        let access_in_scope = network_access_by_source.enter(&current_executions.scope());
+        let vulns_in_scope = vulnerabilities_by_host_and_service.enter(&current_executions.scope());
         
-        // From current execution position, find reachable hosts via network
-        let can_reach = inner_exec
-            .map(|ec| (ec.host.clone(), ec.attacker.clone()))
-            .join(&access)
-            .map(|(_src_host, (attacker, (dst_host, service)))| {
-                ((dst_host, service), attacker)
+        // From each compromised host, find what other hosts can be reached
+        let reachable_destinations = current_executions
+            .map(|execution| (execution.compromised_host.clone(), execution.attacker_id.clone()))
+            .join(&access_in_scope)
+            .map(|(_source_host, (attacker_id, (destination_host, service_name)))| {
+                ((destination_host, service_name), attacker_id)
             });
         
-        // Join with vulnerabilities on (host, service) to get new execution
-        let new_exec = can_reach
-            .join(&vulns)
-            .map(|((host, _service), (attacker, privilege))| ExecCode {
-                attacker,
-                host,
-                privilege,
+        // Join with vulnerabilities to get new code executions
+        let newly_discovered_executions = reachable_destinations
+            .join(&vulns_in_scope)
+            .map(|((host, _service), (attacker_id, privilege))| AttackerCodeExecution {
+                attacker_id,
+                compromised_host: host,
+                obtained_privilege: privilege,
             });
         
-        // Combine with existing and deduplicate
-        new_exec
-            .concat(inner_exec)
+        // Combine new executions with existing ones and remove duplicates
+        newly_discovered_executions
+            .concat(current_executions)
             .distinct()
     });
 
-    // ========================================================================
-    // RULE 4: Attacker owns machine if they have root privilege
-    // ========================================================================
-    // ownsMachine(Attacker, Host) :-
-    //     execCode(Attacker, Host, root).
+    // Step 4: Attacker owns machine if they have root privilege
+    // ownsMachine(attacker, host) :- execCode(attacker, host, root)
     
-    let owns_machine = exec_code
-        .filter(|ec| ec.privilege == Privilege::Root)
-        .map(|ec| OwnsMachine {
-            attacker: ec.attacker,
-            host: ec.host,
+    let machines_owned_by_attackers = all_code_executions
+        .filter(|execution| execution.obtained_privilege == PrivilegeLevel::Root)
+        .map(|execution| AttackerOwnsMachine {
+            attacker_id: execution.attacker_id,
+            owned_host: execution.compromised_host,
         })
         .distinct();
 
-    // ========================================================================
-    // RULE 5: Goal reached when attacker owns target machine
-    // ========================================================================
-    // goalReached(Attacker, Target) :-
-    //     attackerGoal(Attacker, Target),
-    //     ownsMachine(Attacker, Target).
+    // Step 5: Check if attacker reached their goal
+    // goalReached(attacker, target) :- attackerGoal(attacker, target), ownsMachine(attacker, target)
     
-    // For semijoin, we need just the keys
-    let owns_keys = owns_machine
-        .map(|om| (om.attacker.clone(), om.host.clone()))
+    // Get keys of owned machines for semijoin
+    let owned_machine_keys = machines_owned_by_attackers
+        .map(|owned| (owned.attacker_id.clone(), owned.owned_host.clone()))
         .distinct();
     
-    let goals_keyed = attacker_goals
-        .map(|g| ((g.attacker.clone(), g.target_host.clone()), g));
+    // Index goals by (attacker, target)
+    let goals_with_key = attacker_goals_collection
+        .map(|goal| ((goal.attacker_id.clone(), goal.target_host_name.clone()), goal));
     
-    let goals_reached = goals_keyed
-        .semijoin(&owns_keys)
-        .map(|(_, goal)| GoalReached {
-            attacker: goal.attacker,
-            target: goal.target_host,
+    // Join goals with owned machines
+    let successfully_reached_goals = goals_with_key
+        .semijoin(&owned_machine_keys)
+        .map(|(_, goal)| AttackerGoalReached {
+            attacker_id: goal.attacker_id,
+            reached_target: goal.target_host_name,
         });
 
-    // Consolidate to merge duplicate diffs
+    // Consolidate results to merge duplicate updates
     (
-        exec_code.consolidate(),
-        owns_machine.consolidate(),
-        goals_reached.consolidate(),
+        all_code_executions.consolidate(),
+        machines_owned_by_attackers.consolidate(),
+        successfully_reached_goals.consolidate(),
     )
 }
 
-/// Alternative simpler implementation without full iteration
-/// Uses a fixed number of hops for bounded attack depth
-pub fn build_attack_graph_bounded<G>(
-    vulnerabilities: &Collection<G, Vulnerability>,
-    network_access: &Collection<G, NetworkAccess>,
-    attacker_locations: &Collection<G, AttackerLocation>,
-    attacker_goals: &Collection<G, AttackerGoal>,
-    max_hops: usize,
+// Alternative version with bounded iteration depth
+// Useful when you want to limit how many hops the attacker can make
+pub fn build_attack_graph_with_max_hops<G>(
+    vulnerability_collection: &Collection<G, VulnerabilityRecord>,
+    network_access_collection: &Collection<G, NetworkAccessRule>,
+    attacker_positions_collection: &Collection<G, AttackerStartingPosition>,
+    attacker_goals_collection: &Collection<G, AttackerTargetGoal>,
+    maximum_attack_hops: usize,
 ) -> (
-    Collection<G, ExecCode>,
-    Collection<G, OwnsMachine>,
-    Collection<G, GoalReached>,
+    Collection<G, AttackerCodeExecution>,
+    Collection<G, AttackerOwnsMachine>,
+    Collection<G, AttackerGoalReached>,
 )
 where
     G: Scope,
     G::Timestamp: differential_dataflow::lattice::Lattice + Ord,
 {
-    // Initial execution positions
-    let mut exec_code = attacker_locations
-        .map(|loc| ExecCode {
-            attacker: loc.attacker,
-            host: loc.host,
-            privilege: loc.privilege,
+    // Start with initial attacker positions
+    let mut current_code_executions = attacker_positions_collection
+        .map(|position| AttackerCodeExecution {
+            attacker_id: position.attacker_id,
+            compromised_host: position.starting_host,
+            obtained_privilege: position.initial_privilege,
         });
 
-    // Prepare collections for joining
-    let access_by_src = network_access
-        .map(|na| (na.src_host.clone(), (na.dst_host.clone(), na.service.clone())));
+    // Prepare indexed collections for joins
+    let network_access_by_source = network_access_collection
+        .map(|access| (access.source_host.clone(), (access.destination_host.clone(), access.service_name.clone())));
     
-    let vuln_by_host_service = vulnerabilities
-        .map(|v| ((v.host.clone(), v.service.clone()), v.grants_privilege.clone()));
+    let vulnerabilities_by_host_and_service = vulnerability_collection
+        .map(|vuln| ((vuln.host_name.clone(), vuln.affected_service.clone()), vuln.privilege_gained_on_exploit.clone()));
 
-    // Unroll the recursion for a fixed number of hops
-    for _hop in 0..max_hops {
-        let new_exec = exec_code
-            .map(|ec| (ec.host.clone(), ec.attacker.clone()))
-            .join(&access_by_src)
-            .map(|(_src, (attacker, (dst, service)))| {
-                ((dst, service), attacker)
+    // Expand attack graph for each hop
+    for _hop_number in 0..maximum_attack_hops {
+        let new_executions_this_hop = current_code_executions
+            .map(|execution| (execution.compromised_host.clone(), execution.attacker_id.clone()))
+            .join(&network_access_by_source)
+            .map(|(_source, (attacker_id, (destination, service)))| {
+                ((destination, service), attacker_id)
             })
-            .join(&vuln_by_host_service)
-            .map(|((host, _service), (attacker, privilege))| ExecCode {
-                attacker,
-                host,
-                privilege,
+            .join(&vulnerabilities_by_host_and_service)
+            .map(|((host, _service), (attacker_id, privilege))| AttackerCodeExecution {
+                attacker_id,
+                compromised_host: host,
+                obtained_privilege: privilege,
             });
         
-        exec_code = exec_code.concat(&new_exec).distinct();
+        current_code_executions = current_code_executions.concat(&new_executions_this_hop).distinct();
     }
 
-    // Derive owns_machine
-    let owns_machine = exec_code
-        .filter(|ec| ec.privilege == Privilege::Root)
-        .map(|ec| OwnsMachine {
-            attacker: ec.attacker,
-            host: ec.host,
+    // Compute owned machines
+    let machines_owned = current_code_executions
+        .filter(|execution| execution.obtained_privilege == PrivilegeLevel::Root)
+        .map(|execution| AttackerOwnsMachine {
+            attacker_id: execution.attacker_id,
+            owned_host: execution.compromised_host,
         })
         .distinct();
 
-    // Check goals - use semijoin with just keys
-    let owns_keys = owns_machine
-        .map(|om| (om.attacker.clone(), om.host.clone()))
+    // Check if goals are reached
+    let owned_keys = machines_owned
+        .map(|owned| (owned.attacker_id.clone(), owned.owned_host.clone()))
         .distinct();
     
-    let goals_keyed = attacker_goals
-        .map(|g| ((g.attacker.clone(), g.target_host.clone()), g));
+    let goals_indexed = attacker_goals_collection
+        .map(|goal| ((goal.attacker_id.clone(), goal.target_host_name.clone()), goal));
     
-    let goals_reached = goals_keyed
-        .semijoin(&owns_keys)
-        .map(|(_, goal)| GoalReached {
-            attacker: goal.attacker,
-            target: goal.target_host,
+    let goals_reached = goals_indexed
+        .semijoin(&owned_keys)
+        .map(|(_, goal)| AttackerGoalReached {
+            attacker_id: goal.attacker_id,
+            reached_target: goal.target_host_name,
         });
 
-    (exec_code, owns_machine, goals_reached)
+    (current_code_executions, machines_owned, goals_reached)
 }

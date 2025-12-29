@@ -1,227 +1,195 @@
-//! Dynamic Attack Graphs using Differential Dataflow
-//!
-//! This module defines the core data types (schema) for representing
-//! network security concepts in a way compatible with differential dataflow.
+// Schema for attack graph data types
+// Defines all the structures needed to represent network security facts
 
 use abomonation_derive::Abomonation;
 use std::fmt;
 
-/// Represents a host/machine in the network
-pub type Host = String;
+// Type aliases for better readability
+pub type HostIdentifier = String;
+pub type ServiceName = String;
+pub type VulnerabilityIdentifier = String;
+pub type AttackerIdentifier = String;
 
-/// Represents a network service/protocol
-pub type Service = String;
-
-/// Represents a CVE identifier
-pub type CveId = String;
-
-/// Represents an attacker identity
-pub type AttackerId = String;
-
-/// Privilege level on a system
+// Privilege levels that can be obtained on a system
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub enum Privilege {
+pub enum PrivilegeLevel {
     None,
     User,
     Root,
 }
 
-impl fmt::Display for Privilege {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl fmt::Display for PrivilegeLevel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Privilege::None => write!(f, "none"),
-            Privilege::User => write!(f, "user"),
-            Privilege::Root => write!(f, "root"),
+            PrivilegeLevel::None => write!(formatter, "none"),
+            PrivilegeLevel::User => write!(formatter, "user"),
+            PrivilegeLevel::Root => write!(formatter, "root"),
         }
     }
 }
 
-/// Firewall action
+// What a firewall rule does
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub enum FirewallAction {
+pub enum FirewallRuleAction {
     Allow,
     Deny,
 }
 
-// ============================================================================
-// BASE FACTS (EDB - Extensional Database)
-// ============================================================================
+// ----------------------------------
+// Base facts (input data)
+// ----------------------------------
 
-/// A vulnerability present on a host
-/// 
-/// Corresponds to MulVAL's vulExists(Host, VulnID, Service)
+// A vulnerability that exists on a specific host
+// Similar to MulVAL's vulExists predicate
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct Vulnerability {
-    /// The host where the vulnerability exists
-    pub host: Host,
-    /// CVE identifier
-    pub cve_id: CveId,
-    /// The service/protocol affected
-    pub service: Service,
-    /// What privilege level the exploit grants
-    pub grants_privilege: Privilege,
+pub struct VulnerabilityRecord {
+    pub host_name: HostIdentifier,
+    pub vulnerability_id: VulnerabilityIdentifier,
+    pub affected_service: ServiceName,
+    pub privilege_gained_on_exploit: PrivilegeLevel,
 }
 
-impl Vulnerability {
-    pub fn new(host: &str, cve_id: &str, service: &str, grants: Privilege) -> Self {
+impl VulnerabilityRecord {
+    pub fn new(host_name: &str, vulnerability_id: &str, affected_service: &str, privilege_gained: PrivilegeLevel) -> Self {
         Self {
-            host: host.to_string(),
-            cve_id: cve_id.to_string(),
-            service: service.to_string(),
-            grants_privilege: grants,
+            host_name: host_name.to_string(),
+            vulnerability_id: vulnerability_id.to_string(),
+            affected_service: affected_service.to_string(),
+            privilege_gained_on_exploit: privilege_gained,
         }
     }
 }
 
-/// Network connectivity between hosts
-/// 
-/// Corresponds to MulVAL's hacl(SrcHost, DstHost, Protocol, Port)
+// Network connection between two hosts
+// Similar to MulVAL's hacl predicate
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct NetworkAccess {
-    /// Source host
-    pub src_host: Host,
-    /// Destination host
-    pub dst_host: Host,
-    /// Service/protocol accessible
-    pub service: Service,
+pub struct NetworkAccessRule {
+    pub source_host: HostIdentifier,
+    pub destination_host: HostIdentifier,
+    pub service_name: ServiceName,
 }
 
-impl NetworkAccess {
-    pub fn new(src: &str, dst: &str, service: &str) -> Self {
+impl NetworkAccessRule {
+    pub fn new(source: &str, destination: &str, service: &str) -> Self {
         Self {
-            src_host: src.to_string(),
-            dst_host: dst.to_string(),
-            service: service.to_string(),
+            source_host: source.to_string(),
+            destination_host: destination.to_string(),
+            service_name: service.to_string(),
         }
     }
 }
 
-/// Firewall rule
+// A firewall rule that blocks or allows traffic
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct FirewallRule {
-    /// Source host or zone
-    pub src: Host,
-    /// Destination host
-    pub dst: Host,
-    /// Service affected
-    pub service: Service,
-    /// Action (allow/deny)
-    pub action: FirewallAction,
+pub struct FirewallRuleRecord {
+    pub source_zone: HostIdentifier,
+    pub destination_host: HostIdentifier,
+    pub service_name: ServiceName,
+    pub rule_action: FirewallRuleAction,
 }
 
-impl FirewallRule {
-    pub fn deny(src: &str, dst: &str, service: &str) -> Self {
+impl FirewallRuleRecord {
+    pub fn create_deny_rule(source: &str, destination: &str, service: &str) -> Self {
         Self {
-            src: src.to_string(),
-            dst: dst.to_string(),
-            service: service.to_string(),
-            action: FirewallAction::Deny,
+            source_zone: source.to_string(),
+            destination_host: destination.to_string(),
+            service_name: service.to_string(),
+            rule_action: FirewallRuleAction::Deny,
         }
     }
 }
 
-/// Where an attacker is initially located
+// Where the attacker starts from
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct AttackerLocation {
-    /// Attacker identifier
-    pub attacker: AttackerId,
-    /// Initial host where attacker has access
-    pub host: Host,
-    /// Initial privilege level
-    pub privilege: Privilege,
+pub struct AttackerStartingPosition {
+    pub attacker_id: AttackerIdentifier,
+    pub starting_host: HostIdentifier,
+    pub initial_privilege: PrivilegeLevel,
 }
 
-impl AttackerLocation {
-    pub fn new(attacker: &str, host: &str, privilege: Privilege) -> Self {
+impl AttackerStartingPosition {
+    pub fn new(attacker_id: &str, starting_host: &str, initial_privilege: PrivilegeLevel) -> Self {
         Self {
-            attacker: attacker.to_string(),
-            host: host.to_string(),
-            privilege,
+            attacker_id: attacker_id.to_string(),
+            starting_host: starting_host.to_string(),
+            initial_privilege,
         }
     }
 }
 
-/// What the attacker wants to compromise
+// What the attacker wants to compromise
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct AttackerGoal {
-    /// Attacker identifier
-    pub attacker: AttackerId,
-    /// Target host
-    pub target_host: Host,
+pub struct AttackerTargetGoal {
+    pub attacker_id: AttackerIdentifier,
+    pub target_host_name: HostIdentifier,
 }
 
-impl AttackerGoal {
-    pub fn new(attacker: &str, target: &str) -> Self {
+impl AttackerTargetGoal {
+    pub fn new(attacker_id: &str, target_host: &str) -> Self {
         Self {
-            attacker: attacker.to_string(),
-            target_host: target.to_string(),
+            attacker_id: attacker_id.to_string(),
+            target_host_name: target_host.to_string(),
         }
     }
 }
 
-// ============================================================================
-// DERIVED FACTS (IDB - Intensional Database)
-// ============================================================================
+// ----------------------------------
+// Derived facts (computed by rules)
+// ----------------------------------
 
-/// Effective network access (after firewall rules applied)
+// Network access after applying firewall rules
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct EffectiveAccess {
-    pub src_host: Host,
-    pub dst_host: Host,
-    pub service: Service,
+pub struct EffectiveNetworkAccess {
+    pub source_host: HostIdentifier,
+    pub destination_host: HostIdentifier,
+    pub service_name: ServiceName,
 }
 
-/// Attacker has gained code execution on a host
-/// 
-/// Corresponds to MulVAL's execCode(Attacker, Host, Privilege)
+// Attacker can execute code on a host
+// Similar to MulVAL's execCode predicate
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct ExecCode {
-    pub attacker: AttackerId,
-    pub host: Host,
-    pub privilege: Privilege,
+pub struct AttackerCodeExecution {
+    pub attacker_id: AttackerIdentifier,
+    pub compromised_host: HostIdentifier,
+    pub obtained_privilege: PrivilegeLevel,
 }
 
-impl fmt::Display for ExecCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "execCode({}, {}, {})", self.attacker, self.host, self.privilege)
+impl fmt::Display for AttackerCodeExecution {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "execCode({}, {}, {})", self.attacker_id, self.compromised_host, self.obtained_privilege)
     }
 }
 
-/// Attacker owns/controls a machine (has root)
+// Attacker has full control of a machine (root access)
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct OwnsMachine {
-    pub attacker: AttackerId,
-    pub host: Host,
+pub struct AttackerOwnsMachine {
+    pub attacker_id: AttackerIdentifier,
+    pub owned_host: HostIdentifier,
 }
 
-impl fmt::Display for OwnsMachine {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ownsMachine({}, {})", self.attacker, self.host)
+impl fmt::Display for AttackerOwnsMachine {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "ownsMachine({}, {})", self.attacker_id, self.owned_host)
     }
 }
 
-/// Attacker has reached their goal
+// Attacker has reached their target
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
-pub struct GoalReached {
-    pub attacker: AttackerId,
-    pub target: Host,
+pub struct AttackerGoalReached {
+    pub attacker_id: AttackerIdentifier,
+    pub reached_target: HostIdentifier,
 }
 
-impl fmt::Display for GoalReached {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "goalReached({}, {})", self.attacker, self.target)
+impl fmt::Display for AttackerGoalReached {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "goalReached({}, {})", self.attacker_id, self.reached_target)
     }
 }
 
-// ============================================================================
-// HELPER TYPES FOR JOINS
-// ============================================================================
+// ----------------------------------
+// Key types for join operations
+// ----------------------------------
 
-/// Key for joining on (attacker, host) pairs
-pub type AttackerHostKey = (AttackerId, Host);
-
-/// Key for joining on (src, dst, service) triples
-pub type AccessKey = (Host, Host, Service);
-
-/// Key for joining on (host, service) pairs  
-pub type HostServiceKey = (Host, Service);
+pub type AttackerAndHostKey = (AttackerIdentifier, HostIdentifier);
+pub type NetworkAccessKey = (HostIdentifier, HostIdentifier, ServiceName);
+pub type HostAndServiceKey = (HostIdentifier, ServiceName);

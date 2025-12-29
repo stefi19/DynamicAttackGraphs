@@ -1,14 +1,9 @@
-//! Main entry point for the Dynamic Attack Graph PoC
-//!
-//! This demonstrates:
-//! 1. Building the attack graph from initial facts
-//! 2. Incrementally updating when facts change
-//! 3. Observing the differential (incremental) output
+// Main entry point for the attack graph demonstration
+// Shows how the attack graph updates incrementally when facts change
 
 use std::time::Instant;
 
 use differential_dataflow::input::Input;
-use differential_dataflow::operators::arrange::ArrangeByKey;
 use differential_dataflow::operators::Consolidate;
 use timely::dataflow::operators::probe::Handle;
 use timely::dataflow::operators::Probe;
@@ -20,305 +15,305 @@ use rules::build_attack_graph;
 use schema::*;
 
 fn main() {
-    println!("╔══════════════════════════════════════════════════════════════════╗");
-    println!("║     Dynamic Attack Graphs using Differential Dataflow            ║");
-    println!("║                    Proof of Concept                              ║");
-    println!("╚══════════════════════════════════════════════════════════════════╝");
+    println!("========================================================================");
+    println!("     Dynamic Attack Graphs using Differential Dataflow");
+    println!("                    Proof of Concept");
+    println!("========================================================================");
     println!();
 
     // Run the timely dataflow computation
     timely::execute_from_args(std::env::args(), |worker| {
-        let index = worker.index();
-        let peers = worker.peers();
+        let worker_index = worker.index();
+        let total_workers = worker.peers();
 
-        // Only worker 0 prints detailed output
-        let is_main = index == 0;
+        // Only the first worker prints output
+        let is_main_worker = worker_index == 0;
 
-        // Create a probe to track computation progress
-        let mut probe = Handle::new();
+        // Probe to track when computation is complete
+        let mut computation_probe = Handle::new();
 
-        // Create input handles for each fact type
+        // Create input handles for each type of fact
         let (
-            mut vuln_input,
-            mut network_input,
-            mut firewall_input,
-            mut attacker_loc_input,
+            mut vulnerability_input,
+            mut network_access_input,
+            mut firewall_rules_input,
+            mut attacker_position_input,
             mut attacker_goal_input,
-            probe_handle,
+            output_probe,
         ) = worker.dataflow::<usize, _, _>(|scope| {
-            // Create input collections
-            let (vuln_handle, vulnerabilities) = scope.new_collection::<Vulnerability, isize>();
-            let (net_handle, network_access) = scope.new_collection::<NetworkAccess, isize>();
-            let (fw_handle, firewall_rules) = scope.new_collection::<FirewallRule, isize>();
-            let (loc_handle, attacker_locations) = scope.new_collection::<AttackerLocation, isize>();
-            let (goal_handle, attacker_goals) = scope.new_collection::<AttackerGoal, isize>();
+            // Create input collections for each fact type
+            let (vuln_handle, vulnerability_collection) = scope.new_collection::<VulnerabilityRecord, isize>();
+            let (network_handle, network_access_collection) = scope.new_collection::<NetworkAccessRule, isize>();
+            let (firewall_handle, firewall_rules_collection) = scope.new_collection::<FirewallRuleRecord, isize>();
+            let (position_handle, attacker_positions_collection) = scope.new_collection::<AttackerStartingPosition, isize>();
+            let (goal_handle, attacker_goals_collection) = scope.new_collection::<AttackerTargetGoal, isize>();
 
-            // Build the attack graph
-            let (exec_code, owns_machine, goals_reached) = build_attack_graph(
-                &vulnerabilities,
-                &network_access,
-                &firewall_rules,
-                &attacker_locations,
-                &attacker_goals,
+            // Build the attack graph using our rules
+            let (code_execution_results, machine_ownership_results, goal_reached_results) = build_attack_graph(
+                &vulnerability_collection,
+                &network_access_collection,
+                &firewall_rules_collection,
+                &attacker_positions_collection,
+                &attacker_goals_collection,
             );
 
-            // Inspect changes to derived collections
-            exec_code
-                .inspect(move |x| {
-                    if is_main {
-                        let (data, time, diff) = x;
-                        let sign = if *diff > 0 { "+" } else { "-" };
-                        println!("  [t={}] {} {}", time, sign, data);
+            // Print changes to code execution facts
+            code_execution_results
+                .inspect(move |change| {
+                    if is_main_worker {
+                        let (data, timestamp, difference) = change;
+                        let change_type = if *difference > 0 { "+" } else { "-" };
+                        println!("  [t={}] {} {}", timestamp, change_type, data);
                     }
                 })
-                .probe_with(&mut probe);
+                .probe_with(&mut computation_probe);
 
-            owns_machine
-                .inspect(move |x| {
-                    if is_main {
-                        let (data, time, diff) = x;
-                        let sign = if *diff > 0 { "+" } else { "-" };
-                        println!("  [t={}] {} {}", time, sign, data);
+            // Print changes to machine ownership facts
+            machine_ownership_results
+                .inspect(move |change| {
+                    if is_main_worker {
+                        let (data, timestamp, difference) = change;
+                        let change_type = if *difference > 0 { "+" } else { "-" };
+                        println!("  [t={}] {} {}", timestamp, change_type, data);
                     }
                 })
-                .probe_with(&mut probe);
+                .probe_with(&mut computation_probe);
 
-            goals_reached
-                .inspect(move |x| {
-                    if is_main {
-                        let (data, time, diff) = x;
-                        let sign = if *diff > 0 { "+" } else { "-" };
-                        println!("  [t={}] {} {} (TARGET COMPROMISED!)", time, sign, data);
+            // Print changes to goal reached facts
+            goal_reached_results
+                .inspect(move |change| {
+                    if is_main_worker {
+                        let (data, timestamp, difference) = change;
+                        let change_type = if *difference > 0 { "+" } else { "-" };
+                        println!("  [t={}] {} {} (TARGET COMPROMISED)", timestamp, change_type, data);
                     }
                 })
-                .probe_with(&mut probe);
+                .probe_with(&mut computation_probe);
 
-            let probe_handle = goals_reached.probe();
+            let output_probe = goal_reached_results.probe();
 
             (
                 vuln_handle,
-                net_handle,
-                fw_handle,
-                loc_handle,
+                network_handle,
+                firewall_handle,
+                position_handle,
                 goal_handle,
-                probe_handle,
+                output_probe,
             )
         });
 
-        // ====================================================================
-        // PHASE 1: Initial Network State (Time 0)
-        // ====================================================================
-        if is_main {
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        // ----------------------------------------------------------------
+        // PHASE 1: Load initial network state (timestamp 0)
+        // ----------------------------------------------------------------
+        if is_main_worker {
+            println!("------------------------------------------------------------------------");
             println!("PHASE 1: Loading initial network state (time=0)");
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("------------------------------------------------------------------------");
             println!();
             println!("Network topology:");
-            println!("  [Internet] → [DMZ/web01] → [Internal/db01] → [Target/admin01]");
+            println!("  [Internet] -> [DMZ/web01] -> [Internal/db01] -> [Target/admin01]");
             println!();
         }
 
-        // Network topology
-        let network_facts = vec![
-            // Internet to DMZ
-            NetworkAccess::new("internet", "web01", "http"),
-            NetworkAccess::new("internet", "web01", "https"),
-            // DMZ to Internal
-            NetworkAccess::new("web01", "db01", "mysql"),
-            NetworkAccess::new("web01", "db01", "ssh"),
-            // Internal to Admin
-            NetworkAccess::new("db01", "admin01", "ssh"),
-            NetworkAccess::new("db01", "admin01", "smb"),
+        // Define network connections
+        let network_topology = vec![
+            // From internet to DMZ
+            NetworkAccessRule::new("internet", "web01", "http"),
+            NetworkAccessRule::new("internet", "web01", "https"),
+            // From DMZ to internal network
+            NetworkAccessRule::new("web01", "db01", "mysql"),
+            NetworkAccessRule::new("web01", "db01", "ssh"),
+            // From internal to admin server
+            NetworkAccessRule::new("db01", "admin01", "ssh"),
+            NetworkAccessRule::new("db01", "admin01", "smb"),
         ];
 
-        // Vulnerabilities
-        let vuln_facts = vec![
-            // Web server has RCE vulnerability via HTTP
-            Vulnerability::new("web01", "CVE-2024-1234", "http", Privilege::User),
-            // Web server also vulnerable via HTTPS
-            Vulnerability::new("web01", "CVE-2024-1234", "https", Privilege::User),
-            // DB server has privilege escalation
-            Vulnerability::new("db01", "CVE-2024-5678", "mysql", Privilege::Root),
-            // DB server SSH vulnerability
-            Vulnerability::new("db01", "CVE-2024-9999", "ssh", Privilege::User),
-            // Admin server SMB vulnerability
-            Vulnerability::new("admin01", "CVE-2024-8888", "smb", Privilege::Root),
+        // Define vulnerabilities on each host
+        let known_vulnerabilities = vec![
+            // Web server vulnerabilities
+            VulnerabilityRecord::new("web01", "CVE-2024-1234", "http", PrivilegeLevel::User),
+            VulnerabilityRecord::new("web01", "CVE-2024-1234", "https", PrivilegeLevel::User),
+            // Database server vulnerabilities
+            VulnerabilityRecord::new("db01", "CVE-2024-5678", "mysql", PrivilegeLevel::Root),
+            VulnerabilityRecord::new("db01", "CVE-2024-9999", "ssh", PrivilegeLevel::User),
+            // Admin server vulnerabilities
+            VulnerabilityRecord::new("admin01", "CVE-2024-8888", "smb", PrivilegeLevel::Root),
         ];
 
         // Attacker starts on the internet
-        let attacker_facts = vec![
-            AttackerLocation::new("eve", "internet", Privilege::User),
+        let attacker_starting_positions = vec![
+            AttackerStartingPosition::new("eve", "internet", PrivilegeLevel::User),
         ];
 
-        // Goal: compromise admin01
-        let goal_facts = vec![
-            AttackerGoal::new("eve", "admin01"),
+        // Attacker wants to compromise admin01
+        let attacker_objectives = vec![
+            AttackerTargetGoal::new("eve", "admin01"),
         ];
 
-        // Insert initial facts
-        let start = Instant::now();
+        // Insert all initial facts
+        let computation_start_time = Instant::now();
 
-        for fact in network_facts {
-            network_input.insert(fact);
+        for network_connection in network_topology {
+            network_access_input.insert(network_connection);
         }
-        for fact in vuln_facts {
-            vuln_input.insert(fact);
+        for vulnerability in known_vulnerabilities {
+            vulnerability_input.insert(vulnerability);
         }
-        for fact in attacker_facts {
-            attacker_loc_input.insert(fact);
+        for attacker_position in attacker_starting_positions {
+            attacker_position_input.insert(attacker_position);
         }
-        for fact in goal_facts {
-            attacker_goal_input.insert(fact);
+        for objective in attacker_objectives {
+            attacker_goal_input.insert(objective);
         }
 
-        // Advance time to 1 and flush
-        vuln_input.advance_to(1);
-        network_input.advance_to(1);
-        firewall_input.advance_to(1);
-        attacker_loc_input.advance_to(1);
+        // Advance all inputs to timestamp 1 and flush
+        vulnerability_input.advance_to(1);
+        network_access_input.advance_to(1);
+        firewall_rules_input.advance_to(1);
+        attacker_position_input.advance_to(1);
         attacker_goal_input.advance_to(1);
-        vuln_input.flush();
-        network_input.flush();
-        firewall_input.flush();
-        attacker_loc_input.flush();
+        vulnerability_input.flush();
+        network_access_input.flush();
+        firewall_rules_input.flush();
+        attacker_position_input.flush();
         attacker_goal_input.flush();
 
-        // Wait for computation to complete
-        while probe.less_than(&1) {
+        // Wait for computation to finish
+        while computation_probe.less_than(&1) {
             worker.step();
         }
 
-        if is_main {
+        if is_main_worker {
             println!();
-            println!("  ⏱  Initial computation completed in {:?}", start.elapsed());
+            println!("  Initial computation completed in {:?}", computation_start_time.elapsed());
             println!();
         }
 
-        // ====================================================================
-        // PHASE 2: Add a firewall rule (Time 1)
-        // ====================================================================
-        if is_main {
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        // ----------------------------------------------------------------
+        // PHASE 2: Add a firewall rule (timestamp 1)
+        // ----------------------------------------------------------------
+        if is_main_worker {
+            println!("------------------------------------------------------------------------");
             println!("PHASE 2: Adding firewall rule to block HTTP (time=1)");
-            println!("         Rule: DENY internet → web01 on http");
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("         Rule: DENY internet -> web01 on http");
+            println!("------------------------------------------------------------------------");
             println!();
         }
 
-        let start = Instant::now();
+        let update_start_time = Instant::now();
 
-        // Add a firewall rule blocking HTTP
-        firewall_input.insert(FirewallRule::deny("internet", "web01", "http"));
+        // Add firewall rule that blocks HTTP access
+        firewall_rules_input.insert(FirewallRuleRecord::create_deny_rule("internet", "web01", "http"));
 
-        // Advance time
-        vuln_input.advance_to(2);
-        network_input.advance_to(2);
-        firewall_input.advance_to(2);
-        attacker_loc_input.advance_to(2);
+        // Advance to next timestamp
+        vulnerability_input.advance_to(2);
+        network_access_input.advance_to(2);
+        firewall_rules_input.advance_to(2);
+        attacker_position_input.advance_to(2);
         attacker_goal_input.advance_to(2);
-        vuln_input.flush();
-        network_input.flush();
-        firewall_input.flush();
-        attacker_loc_input.flush();
+        vulnerability_input.flush();
+        network_access_input.flush();
+        firewall_rules_input.flush();
+        attacker_position_input.flush();
         attacker_goal_input.flush();
 
-        while probe.less_than(&2) {
+        while computation_probe.less_than(&2) {
             worker.step();
         }
 
-        if is_main {
+        if is_main_worker {
             println!();
-            println!("  ⏱  Incremental update completed in {:?}", start.elapsed());
-            println!("  📝 Note: HTTP path removed, but HTTPS path still exists!");
+            println!("  Incremental update completed in {:?}", update_start_time.elapsed());
+            println!("  Note: HTTP path removed, but HTTPS path still exists");
             println!();
         }
 
-        // ====================================================================
-        // PHASE 3: Patch the critical vulnerability (Time 2)
-        // ====================================================================
-        if is_main {
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        // ----------------------------------------------------------------
+        // PHASE 3: Patch the vulnerability (timestamp 2)
+        // ----------------------------------------------------------------
+        if is_main_worker {
+            println!("------------------------------------------------------------------------");
             println!("PHASE 3: Patching CVE-2024-1234 on web01 (time=2)");
-            println!("         This removes the initial entry point!");
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("         This removes the initial entry point");
+            println!("------------------------------------------------------------------------");
             println!();
         }
 
-        let start = Instant::now();
+        let update_start_time = Instant::now();
 
-        // Remove both vulnerabilities (HTTP and HTTPS) for CVE-2024-1234
-        vuln_input.remove(Vulnerability::new("web01", "CVE-2024-1234", "http", Privilege::User));
-        vuln_input.remove(Vulnerability::new("web01", "CVE-2024-1234", "https", Privilege::User));
+        // Remove both HTTP and HTTPS vulnerabilities
+        vulnerability_input.remove(VulnerabilityRecord::new("web01", "CVE-2024-1234", "http", PrivilegeLevel::User));
+        vulnerability_input.remove(VulnerabilityRecord::new("web01", "CVE-2024-1234", "https", PrivilegeLevel::User));
 
-        // Advance time
-        vuln_input.advance_to(3);
-        network_input.advance_to(3);
-        firewall_input.advance_to(3);
-        attacker_loc_input.advance_to(3);
+        // Advance to next timestamp
+        vulnerability_input.advance_to(3);
+        network_access_input.advance_to(3);
+        firewall_rules_input.advance_to(3);
+        attacker_position_input.advance_to(3);
         attacker_goal_input.advance_to(3);
-        vuln_input.flush();
-        network_input.flush();
-        firewall_input.flush();
-        attacker_loc_input.flush();
+        vulnerability_input.flush();
+        network_access_input.flush();
+        firewall_rules_input.flush();
+        attacker_position_input.flush();
         attacker_goal_input.flush();
 
-        while probe.less_than(&3) {
+        while computation_probe.less_than(&3) {
             worker.step();
         }
 
-        if is_main {
+        if is_main_worker {
             println!();
-            println!("  ⏱  Incremental update completed in {:?}", start.elapsed());
-            println!("  🛡️  Target is now protected! All attack paths removed.");
-            println!();
-        }
-
-        // ====================================================================
-        // PHASE 4: New vulnerability discovered (Time 3)
-        // ====================================================================
-        if is_main {
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            println!("PHASE 4: New CVE discovered! CVE-2024-0DAY on web01 (time=3)");
-            println!("         HTTPS service is vulnerable again.");
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("  Incremental update completed in {:?}", update_start_time.elapsed());
+            println!("  Target is now protected - all attack paths removed");
             println!();
         }
 
-        let start = Instant::now();
+        // ----------------------------------------------------------------
+        // PHASE 4: New vulnerability discovered (timestamp 3)
+        // ----------------------------------------------------------------
+        if is_main_worker {
+            println!("------------------------------------------------------------------------");
+            println!("PHASE 4: New CVE discovered - CVE-2024-0DAY on web01 (time=3)");
+            println!("         HTTPS service is vulnerable again");
+            println!("------------------------------------------------------------------------");
+            println!();
+        }
 
-        // Add a new vulnerability
-        vuln_input.insert(Vulnerability::new("web01", "CVE-2024-0DAY", "https", Privilege::User));
+        let update_start_time = Instant::now();
 
-        // Advance time
-        vuln_input.advance_to(4);
-        network_input.advance_to(4);
-        firewall_input.advance_to(4);
-        attacker_loc_input.advance_to(4);
+        // Add new vulnerability
+        vulnerability_input.insert(VulnerabilityRecord::new("web01", "CVE-2024-0DAY", "https", PrivilegeLevel::User));
+
+        // Advance to next timestamp
+        vulnerability_input.advance_to(4);
+        network_access_input.advance_to(4);
+        firewall_rules_input.advance_to(4);
+        attacker_position_input.advance_to(4);
         attacker_goal_input.advance_to(4);
-        vuln_input.flush();
-        network_input.flush();
-        firewall_input.flush();
-        attacker_loc_input.flush();
+        vulnerability_input.flush();
+        network_access_input.flush();
+        firewall_rules_input.flush();
+        attacker_position_input.flush();
         attacker_goal_input.flush();
 
-        while probe.less_than(&4) {
+        while computation_probe.less_than(&4) {
             worker.step();
         }
 
-        if is_main {
+        if is_main_worker {
             println!();
-            println!("  ⏱  Incremental update completed in {:?}", start.elapsed());
-            println!("  ⚠️  Attack paths restored via new vulnerability!");
+            println!("  Incremental update completed in {:?}", update_start_time.elapsed());
+            println!("  Warning: Attack paths restored via new vulnerability");
             println!();
         }
 
-        // ====================================================================
+        // ----------------------------------------------------------------
         // Summary
-        // ====================================================================
-        if is_main {
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        // ----------------------------------------------------------------
+        if is_main_worker {
+            println!("------------------------------------------------------------------------");
             println!("SUMMARY");
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            println!("------------------------------------------------------------------------");
             println!();
             println!("This demonstration showed:");
             println!("  1. Initial attack graph computation from base facts");
@@ -327,11 +322,11 @@ fn main() {
             println!("  4. Incremental update when new vulnerability discovered");
             println!();
             println!("Key observations:");
-            println!("  • Updates only affected relevant derived facts");
-            println!("  • No full recomputation was performed");
-            println!("  • Changes propagated correctly through the graph");
+            println!("  - Updates only affected relevant derived facts");
+            println!("  - No full recomputation was performed");
+            println!("  - Changes propagated correctly through the graph");
             println!();
-            println!("This is the power of differential dataflow for dynamic attack graphs!");
+            println!("This demonstrates the power of differential dataflow for attack graphs.");
         }
     })
     .expect("Computation failed");
