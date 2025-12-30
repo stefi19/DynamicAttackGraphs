@@ -194,20 +194,19 @@ pub fn generate_star_network(
 // Run the chain benchmark - this is the "money shot" for the paper
 // Shows O(1) incremental update vs O(n) full recomputation
 pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
-    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
     
     let (network_topology, vulnerabilities, attacker_positions, attacker_goals) =
         generate_chain_network(number_of_nodes);
 
-    // Use Arc<Mutex> to share timing data across threads
-    let timing_data = Arc::new(Mutex::new((Duration::ZERO, Duration::ZERO)));
-    let timing_clone = Arc::clone(&timing_data);
+    // Use atomics to share timing data (thread-safe)
+    let initial_nanos = Arc::new(AtomicU64::new(0));
+    let incremental_nanos = Arc::new(AtomicU64::new(0));
+    let initial_clone = Arc::clone(&initial_nanos);
+    let incremental_clone = Arc::clone(&incremental_nanos);
 
-    timely::execute_from_args(std::iter::empty::<String>(), move |worker| {
-        let worker_index = worker.index();
-        let is_main_worker = worker_index == 0;
-        let timing = Arc::clone(&timing_clone);
-
+    timely::execute_directly(move |worker| {
         let mut probe = Handle::new();
 
         let (
@@ -296,16 +295,12 @@ pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
         }
 
         let incremental_elapsed = start_incremental.elapsed();
-
-        // Store timing data from main worker only
-        if is_main_worker {
-            let mut data = timing.lock().unwrap();
-            *data = (initial_elapsed, incremental_elapsed);
-        }
-    })
-    .expect("Benchmark computation failed");
-
-    let (initial_time, incremental_time) = *timing_data.lock().unwrap();
+        initial_clone.store(initial_elapsed.as_nanos() as u64, Ordering::SeqCst);
+        incremental_clone.store(incremental_elapsed.as_nanos() as u64, Ordering::SeqCst);
+    });
+    
+    let initial_time = Duration::from_nanos(initial_nanos.load(Ordering::SeqCst));
+    let incremental_time = Duration::from_nanos(incremental_nanos.load(Ordering::SeqCst));
     
     let speedup = if incremental_time.as_nanos() > 0 {
         initial_time.as_secs_f64() / incremental_time.as_secs_f64()
@@ -319,7 +314,7 @@ pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
         incremental_update_time: incremental_time,
         speedup_factor: speedup,
         number_of_attack_paths_initial: number_of_nodes,
-        number_of_attack_paths_after_patch: 1, // Only node_0 remains compromised
+        number_of_attack_paths_after_patch: 1,
     }
 }
 
@@ -330,20 +325,21 @@ pub fn run_scalability_benchmark(sizes: &[usize]) -> Vec<BenchmarkResults> {
 
 // Run star benchmark - converges in O(1) iterations, good for large N
 pub fn run_star_benchmark(number_of_leaves: usize) -> BenchmarkResults {
-    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
     
     let (network_topology, vulnerabilities, attacker_positions, attacker_goals) =
         generate_star_network(number_of_leaves);
 
-    let timing_data = Arc::new(Mutex::new((Duration::ZERO, Duration::ZERO)));
-    let timing_clone = Arc::clone(&timing_data);
     let total_nodes = number_of_leaves + 1; // leaves + hub
+    
+    // Use atomics to share timing data (thread-safe)
+    let initial_nanos = Arc::new(AtomicU64::new(0));
+    let incremental_nanos = Arc::new(AtomicU64::new(0));
+    let initial_clone = Arc::clone(&initial_nanos);
+    let incremental_clone = Arc::clone(&incremental_nanos);
 
-    timely::execute_from_args(std::iter::empty::<String>(), move |worker| {
-        let worker_index = worker.index();
-        let is_main_worker = worker_index == 0;
-        let timing = Arc::clone(&timing_clone);
-
+    timely::execute_directly(move |worker| {
         let mut probe = Handle::new();
 
         let (
@@ -431,15 +427,12 @@ pub fn run_star_benchmark(number_of_leaves: usize) -> BenchmarkResults {
         }
 
         let incremental_elapsed = start_incremental.elapsed();
-
-        if is_main_worker {
-            let mut data = timing.lock().unwrap();
-            *data = (initial_elapsed, incremental_elapsed);
-        }
-    })
-    .expect("Star benchmark failed");
-
-    let (initial_time, incremental_time) = *timing_data.lock().unwrap();
+        initial_clone.store(initial_elapsed.as_nanos() as u64, Ordering::SeqCst);
+        incremental_clone.store(incremental_elapsed.as_nanos() as u64, Ordering::SeqCst);
+    });
+    
+    let initial_time = Duration::from_nanos(initial_nanos.load(Ordering::SeqCst));
+    let incremental_time = Duration::from_nanos(incremental_nanos.load(Ordering::SeqCst));
     
     let speedup = if incremental_time.as_nanos() > 0 {
         initial_time.as_secs_f64() / incremental_time.as_secs_f64()

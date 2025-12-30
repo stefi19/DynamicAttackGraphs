@@ -32,7 +32,7 @@ fn main() {
     println!("PART 2: Chain Network Benchmarks (O(N) iteration depth)");
     println!("--------------------------------------------------------");
     println!("Note: Chain requires O(N) iterations - keeping sizes small.");
-    let chain_sizes = vec![50, 100, 200, 500];
+    let chain_sizes = vec![10, 50, 100, 200];
     
     let mut chain_results = Vec::new();
     for (index, &number_of_nodes) in chain_sizes.iter().enumerate() {
