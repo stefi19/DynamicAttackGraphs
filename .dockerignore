@@ -1,0 +1,25 @@
+# .dockerignore - Exclude unnecessary files from Docker build
+
+# Build artifacts
+target/
+*.dot
+*.png
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation (not needed for running)
+paper/
+*.md
+!README.md
+
+# OS files
+.DS_Store
+Thumbs.db
