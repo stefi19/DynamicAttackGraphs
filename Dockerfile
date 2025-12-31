@@ -1,7 +1,7 @@
 # Dockerfile for Dynamic Attack Graphs
 # Build and run benchmarks in a reproducible environment
 
-FROM rust:1.75-slim-bookworm
+FROM rust:1.83-slim-bookworm
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy source code
-COPY Cargo.toml Cargo.lock ./
+# Copy source code (without Cargo.lock to avoid version issues)
+COPY Cargo.toml ./
 COPY src ./src
 COPY examples ./examples
 
