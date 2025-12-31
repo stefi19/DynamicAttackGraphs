@@ -131,14 +131,14 @@ To show that speedup depends on **where** the change occurs:
 
 ### Key Observations
 
-1. **Minimum time (~50-180µs)**: When cutting near the start (node_0), very few nodes need recomputation
-2. **Maximum time (~1.8-19ms)**: When cutting near the end, almost all nodes are affected
-3. **Average speedup ~2x**: On average, cutting at random position k affects (N-k) nodes, which averages to N/2
+1. **Minimum time (~50-180µs)**: When cutting near the **end** (node N-1), only a few downstream nodes need recomputation
+2. **Maximum time (~1.8-19ms)**: When cutting near the **start** (node 0), almost all nodes (1..N) lose their attack paths
+3. **Average speedup ~2x**: On average, cutting at random position k invalidates (N-k) nodes, which averages to N/2
 4. **The ratio Max/Min grows with N**: Shows the position-dependent nature of incremental updates
 
 ### Interpretation for Paper
 
-> "The random cut benchmark demonstrates that incremental update complexity is O(affected nodes), not O(total nodes). Cutting a chain at position k only recomputes the (N-k) downstream nodes. On average, this yields a 2x speedup over full recomputation."
+> "The random cut benchmark demonstrates that incremental update complexity is O(affected nodes), not O(total nodes). Cutting a chain at position k invalidates the (N-k) downstream nodes. On average, this yields a 2x speedup over full recomputation."
 
 ---
 
