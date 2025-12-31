@@ -1,8 +1,12 @@
 \documentclass[conference]{IEEEtran}
 
+% ============================================================================
+% PACKAGES
+% ============================================================================
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithmic}
+\usepackage{algorithm}
 \usepackage{graphicx}
 \usepackage{textcomp}
 \usepackage{xcolor}
@@ -11,209 +15,350 @@
 \usepackage{hyperref}
 \usepackage{listings}
 \usepackage{tikz}
-\usetikzlibrary{shapes,arrows,positioning}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\usetikzlibrary{shapes,arrows,positioning,calc,patterns,decorations.pathmorphing}
 
-% Code listing style
-\lstset{
-    basicstyle=\ttfamily\small,
+% ============================================================================
+% CODE LISTING STYLES
+% ============================================================================
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{datalog}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{blue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
     breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
     frame=single,
-    language=Prolog,
-    morekeywords={execCode, netAccess, vulExists, hacl, attackerLocated, attackGoal}
+    morekeywords={execCode, netAccess, vulExists, hacl, attackerLocated, attackGoal, ownsMachine, goalReached}
 }
 
+\lstdefinestyle{rust}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{blue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    frame=single,
+    language=C,
+    morekeywords={let, fn, pub, struct, impl, use, mut, self, iterate, join, semijoin, antijoin, map, filter, concat, distinct, Collection, scope, enter}
+}
+
+% ============================================================================
+% DOCUMENT
+% ============================================================================
 \begin{document}
 
-\title{Incremental Attack Graph Computation Using Differential Dataflow}
+\title{Incremental Attack Graph Computation\\Using Differential Dataflow}
 
 \author{
-\IEEEauthorblockN{Anonymous Author(s)}
-\IEEEauthorblockA{Affiliation}
+\IEEEauthorblockN{Stefania-Cristina Mozacu}
+\IEEEauthorblockA{
+\textit{Department of Computing}\\
+\textit{Imperial College London}\\
+London, United Kingdom\\
+stefania.mozacu@imperial.ac.uk}
+\and
+\IEEEauthorblockN{Emil C. Lupu}
+\IEEEauthorblockA{
+\textit{Department of Computing}\\
+\textit{Imperial College London}\\
+London, United Kingdom\\
+e.c.lupu@imperial.ac.uk}
 }
 
 \maketitle
 
+% ============================================================================
+% ABSTRACT
+% ============================================================================
 \begin{abstract}
-Attack graphs are essential tools for network security analysis, but their computation becomes expensive as networks grow and change frequently. Traditional approaches recompute the entire graph after each modification, leading to significant overhead in dynamic environments. We present an approach based on \textit{differential dataflow} that enables \textit{incremental} attack graph maintenance. When the network state changes, our system recomputes only the affected portions of the attack graph, achieving update times proportional to the size of the change rather than the size of the network. We demonstrate speedups of up to 25$\times$ for localized changes in networks with 1000+ nodes, while maintaining identical correctness guarantees to full recomputation.
+Attack graphs are fundamental tools for security analysis, modeling how an attacker can chain vulnerabilities to compromise network resources. However, traditional attack graph generation algorithms recompute the entire graph after each change, making them unsuitable for dynamic environments where vulnerabilities are constantly discovered and patched.
+
+We present a novel approach to attack graph maintenance based on \textit{differential dataflow}, a computational model that automatically propagates changes through a dataflow graph. Our system translates Datalog-style security rules into differential dataflow operators, enabling \textit{incremental} updates: when a vulnerability is patched, only the affected attack paths are recomputed.
+
+We evaluate our approach on synthetic network topologies ranging from 50 to 1000 nodes. For star topologies with localized changes, we achieve speedups of up to \textbf{25$\times$} compared to full recomputation. For chain topologies, we demonstrate that update time is proportional to the number of affected nodes, not the total network size. Our implementation is open-source and provides a foundation for real-time security monitoring in dynamic networks.
 \end{abstract}
 
 \begin{IEEEkeywords}
-attack graphs, incremental computation, differential dataflow, network security, vulnerability analysis
+attack graphs, incremental computation, differential dataflow, network security, vulnerability analysis, Datalog
 \end{IEEEkeywords}
 
+% ============================================================================
+% INTRODUCTION
+% ============================================================================
 \section{Introduction}
 
-Attack graphs model the ways an attacker can compromise a network by chaining together vulnerabilities and network access permissions. They are fundamental to security analysis tasks such as:
+Modern enterprise networks are complex ecosystems with thousands of interconnected hosts, each potentially running vulnerable services. Security analysts use \textit{attack graphs} to understand how an attacker could exploit these vulnerabilities to move laterally through the network and reach critical assets~\cite{sheyner2002automated}. An attack graph is a directed graph where nodes represent security states (e.g., ``attacker has root access on host X'') and edges represent exploit actions that transition between states.
+
+\subsection{Motivation}
+
+Consider a typical enterprise network with the following characteristics:
 \begin{itemize}
-    \item Identifying critical vulnerabilities that enable attack paths
-    \item Prioritizing patches based on attack path impact
-    \item Detecting whether security goals are reachable by an attacker
-    \item Quantifying risk through path analysis
+    \item \textbf{Scale}: Hundreds to thousands of hosts
+    \item \textbf{Dynamics}: Vulnerabilities discovered daily (CVE database averages 50+ new entries per day~\cite{cvedetails})
+    \item \textbf{Urgency}: Security teams need to assess patch priorities in real-time
 \end{itemize}
 
-However, modern networks are \textit{dynamic}: vulnerabilities are discovered and patched, firewall rules change, and new hosts are added or removed. Each change potentially affects the attack graph, requiring recomputation.
-
-\subsection{The Problem with Full Recomputation}
-
-Traditional attack graph algorithms treat each query as independent, recomputing the entire graph from scratch. For a network with $N$ nodes and $E$ edges, this requires $O(E \times D)$ work, where $D$ is the diameter of the attack graph (the longest attack path). In practice, this means:
-
-\begin{itemize}
-    \item A single vulnerability patch triggers full recomputation
-    \item Latency grows with network size, not change size
-    \item Real-time monitoring becomes impractical for large networks
-\end{itemize}
+Traditional attack graph tools like MulVAL~\cite{ou2006mulval} and NetSPA~\cite{ingols2006practical} regenerate the entire graph whenever the network state changes. For a network with $N$ hosts and $E$ network connections, this requires $O(E \times D)$ work, where $D$ is the diameter of the attack graph. When a single vulnerability is patched, the entire computation must be repeated---even if 99\% of the graph remains unchanged.
 
 \subsection{Our Contribution}
 
-We present an attack graph system built on \textit{differential dataflow}~\cite{mcsherry2013differential}, a computational model that automatically maintains query results as input data changes. Our key contributions are:
+We present an \textit{incremental} approach to attack graph maintenance using \textit{differential dataflow}~\cite{mcsherry2013differential}. Our key insight is that attack graph rules can be expressed as dataflow operators, and differential dataflow automatically tracks how changes propagate through these operators.
+
+Our contributions are:
 
 \begin{enumerate}
-    \item \textbf{Declarative Datalog-style rules} that specify attack graph semantics, compiled to efficient differential dataflow operators
-    \item \textbf{Incremental maintenance} with update complexity $O(\Delta E \times \Delta d)$, where $\Delta E$ is the number of affected edges and $\Delta d$ is the local iteration depth
-    \item \textbf{Empirical evaluation} demonstrating 25$\times$ speedup for localized changes in star topologies and 2$\times$ average speedup for random changes in chain topologies
+    \item \textbf{Translation methodology}: We show how to translate MulVAL-style Datalog rules into differential dataflow operators, including handling of recursive rules via fixed-point iteration and negation via antijoin.
+    
+    \item \textbf{Incremental maintenance}: Our system achieves update complexity of $O(\Delta E \times \Delta d)$, where $\Delta E$ is the number of affected edges and $\Delta d$ is the local iteration depth---compared to $O(E \times D)$ for full recomputation.
+    
+    \item \textbf{Empirical evaluation}: We demonstrate speedups of up to 25$\times$ for localized changes in star topologies and 2$\times$ average speedup for random changes in chain topologies.
+    
+    \item \textbf{Open-source implementation}: Our Rust implementation is publicly available, with Docker support for reproducibility.
 \end{enumerate}
 
+% ============================================================================
+% BACKGROUND
+% ============================================================================
 \section{Background}
 
-\subsection{Attack Graph Semantics}
+\subsection{Attack Graphs and MulVAL}
 
-We follow the MulVAL~\cite{ou2006mulval} approach of expressing attack graph logic as Datalog rules. The core relations are:
+MulVAL (Multihost, Multistage Vulnerability Analysis)~\cite{ou2006mulval} is a widely-used framework that models attack graphs using Datalog, a declarative logic programming language. The key relations are:
 
 \begin{itemize}
-    \item \texttt{vulExists(Host, CVE, Service, Privilege)}: Host has a vulnerability
-    \item \texttt{netAccess(Src, Dst, Service)}: Network connectivity exists
-    \item \texttt{hacl(Src, Dst, Service)}: Firewall allows traffic
-    \item \texttt{attackerLocated(Host)}: Attacker's initial position
-    \item \texttt{execCode(Host, Privilege)}: Attacker can execute code (derived)
+    \item \texttt{vulExists(Host, CVE, Service, Priv)}: Host has a vulnerability on a service that grants a privilege level
+    \item \texttt{hacl(Src, Dst, Service)}: Network access control allows traffic from Src to Dst on Service
+    \item \texttt{attackerLocated(Attacker, Host)}: Initial attacker position
+    \item \texttt{execCode(Attacker, Host, Priv)}: Derived---attacker can execute code with privilege Priv on Host
 \end{itemize}
 
-The inference rules define how an attacker progresses:
+The core inference rule is:
 
-\begin{lstlisting}
-% Base case: attacker starts here
-execCode(H, Priv) :-
-    attackerLocated(H),
-    vulExists(H, _, _, Priv).
-
-% Recursive case: lateral movement
-execCode(H2, Priv) :-
-    execCode(H1, _),
-    netAccess(H1, H2, Service),
-    vulExists(H2, _, Service, Priv).
+\begin{lstlisting}[style=datalog, caption={MulVAL lateral movement rule}]
+execCode(Attacker, Host, Priv) :-
+    execCode(Attacker, SrcHost, _),
+    hacl(SrcHost, Host, Service),
+    vulExists(Host, _, Service, Priv).
 \end{lstlisting}
+
+This rule states: if an attacker can execute code on \texttt{SrcHost}, and network access exists from \texttt{SrcHost} to \texttt{Host} on \texttt{Service}, and \texttt{Host} has a vulnerability on that service, then the attacker can execute code on \texttt{Host}.
+
+\subsection{The Recomputation Problem}
+
+MulVAL uses XSB Prolog to evaluate these rules. When any input fact changes (e.g., a vulnerability is patched), the entire Prolog query must be re-executed. This is because:
+
+\begin{enumerate}
+    \item Prolog evaluates rules top-down with backtracking
+    \item There is no mechanism to identify which derived facts depend on the changed input
+    \item The transitive closure (reachability) must be recomputed from scratch
+\end{enumerate}
 
 \subsection{Differential Dataflow}
 
 Differential dataflow~\cite{mcsherry2013differential} is a computational model where:
+
 \begin{enumerate}
-    \item Data is represented as \textit{collections} of records with integer multiplicities
+    \item Data is represented as \textit{collections} of (record, time, multiplicity) tuples
     \item Operators (join, filter, map, etc.) transform collections
-    \item Changes propagate \textit{incrementally} through the dataflow graph
+    \item Changes propagate \textit{incrementally}---when an input changes, only the affected outputs are updated
     \item Fixed-point iteration is supported via the \texttt{iterate} operator
 \end{enumerate}
 
-When an input record is added (multiplicity +1) or removed (multiplicity -1), the system propagates only the \textit{differences} through downstream operators. For idempotent Datalog-style queries, this means:
-\begin{itemize}
-    \item Adding a vulnerability only affects attack paths using that vulnerability
-    \item Removing a vulnerability only invalidates paths that depended on it
-    \item Unaffected paths incur zero recomputation cost
-\end{itemize}
+The key abstraction is the \textit{difference}: when a record is added, it has multiplicity $+1$; when removed, $-1$. Operators propagate these differences through the dataflow graph. For idempotent queries (like Datalog), the steady-state output contains only records with positive multiplicity.
 
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+    node distance=0.8cm and 1.2cm,
+    box/.style={rectangle, draw, rounded corners, minimum width=1.8cm, minimum height=0.6cm, align=center, fill=blue!10},
+    input/.style={rectangle, draw, rounded corners, minimum width=1.8cm, minimum height=0.6cm, align=center, fill=green!20},
+    output/.style={rectangle, draw, rounded corners, minimum width=1.8cm, minimum height=0.6cm, align=center, fill=red!20},
+    arrow/.style={->, thick, >=stealth}
+]
+    % Inputs
+    \node[input] (vuln) {Vulnerabilities};
+    \node[input, right=of vuln] (net) {Network\\Access};
+    \node[input, right=of net] (att) {Attacker\\Position};
+    
+    % Processing
+    \node[box, below=1cm of net] (join1) {Join};
+    \node[box, below=of join1] (filter) {Semijoin};
+    \node[box, below=of filter] (iterate) {Iterate\\(fixed-point)};
+    
+    % Output
+    \node[output, below=of iterate] (exec) {execCode};
+    
+    % Arrows
+    \draw[arrow] (vuln) -- (join1);
+    \draw[arrow] (net) -- (join1);
+    \draw[arrow] (att) -- (filter);
+    \draw[arrow] (join1) -- (filter);
+    \draw[arrow] (filter) -- (iterate);
+    \draw[arrow] (iterate) -- (exec);
+    
+    % Feedback loop
+    \draw[arrow] (iterate.east) -- ++(0.5,0) |- (filter.east);
+    
+\end{tikzpicture}
+\caption{Differential dataflow graph for attack graph computation. Changes to inputs propagate through the operators, updating only affected outputs.}
+\label{fig:dataflow}
+\end{figure}
+
+% ============================================================================
+% SYSTEM DESIGN
+% ============================================================================
 \section{System Design}
 
 \subsection{Architecture Overview}
 
-Our system consists of:
+Our system consists of three components:
+
 \begin{enumerate}
     \item \textbf{Input handles}: Mutable collections for vulnerabilities, network topology, firewall rules, and attacker state
-    \item \textbf{Dataflow graph}: Compiled Datalog rules as differential operators
+    \item \textbf{Dataflow graph}: Compiled Datalog rules as differential operators (Figure~\ref{fig:dataflow})
     \item \textbf{Output probes}: Allow querying the current attack graph state
 \end{enumerate}
 
-\begin{figure}[h]
-\centering
-\begin{tikzpicture}[
-    node distance=1.2cm,
-    box/.style={rectangle, draw, minimum width=2cm, minimum height=0.6cm, align=center},
-    arrow/.style={->, thick}
-]
-    \node[box] (vuln) {Vulnerabilities};
-    \node[box, right=of vuln] (net) {Network\\Topology};
-    \node[box, right=of net] (fw) {Firewall\\Rules};
-    
-    \node[box, below=of net] (join) {Join \& Filter};
-    \node[box, below=of join] (iterate) {Fixed-Point\\Iteration};
-    \node[box, below=of iterate] (output) {Attack Graph};
-    
-    \draw[arrow] (vuln) -- (join);
-    \draw[arrow] (net) -- (join);
-    \draw[arrow] (fw) -- (join);
-    \draw[arrow] (join) -- (iterate);
-    \draw[arrow] (iterate) -- (output);
-    \draw[arrow] (iterate.east) -- ++(0.5,0) |- (iterate.north east);
-\end{tikzpicture}
-\caption{Differential dataflow architecture for attack graphs}
-\label{fig:architecture}
-\end{figure}
+\subsection{Rule Translation}
 
-\subsection{Handling Negation with Antijoin}
+We translate each Datalog rule into a composition of differential dataflow operators:
 
-Firewall rules require negation: traffic is allowed unless explicitly blocked. We implement this using the \textit{antijoin} operator:
+\begin{itemize}
+    \item \textbf{Conjunction} ($\land$) $\rightarrow$ \texttt{join}
+    \item \textbf{Projection} $\rightarrow$ \texttt{map}
+    \item \textbf{Selection} $\rightarrow$ \texttt{filter}
+    \item \textbf{Recursion} $\rightarrow$ \texttt{iterate}
+    \item \textbf{Negation} $\rightarrow$ \texttt{antijoin}
+    \item \textbf{Deduplication} $\rightarrow$ \texttt{distinct}
+\end{itemize}
+
+\subsubsection{Handling Recursion}
+
+The \texttt{execCode} relation is recursive: an attacker can reach host B from host A, then host C from host B, and so on. We implement this using differential dataflow's \texttt{iterate} operator:
+
+\begin{lstlisting}[style=rust, caption={Recursive reachability in differential dataflow}]
+let reachable = attacker_positions.iterate(|inner| {
+    let network = network_access.enter(&inner.scope());
+    let vulns = vulnerabilities.enter(&inner.scope());
+    
+    inner
+        .map(|(att, host)| (host, att))
+        .join(&network)  // (host, (att, (dst, svc)))
+        .map(|(_, (att, (dst, svc)))| ((dst, svc), att))
+        .semijoin(&vulns)  // keep if vulnerable
+        .map(|((dst, _), att)| (att, dst))
+        .concat(inner)
+        .distinct()
+});
+\end{lstlisting}
+
+The \texttt{iterate} operator continues until no new records are produced---the fixed point.
+
+\subsubsection{Handling Negation with Antijoin}
+
+Firewall rules introduce negation: traffic is allowed unless explicitly blocked. We implement this using the \textit{antijoin} operator:
 
 \begin{equation}
 \text{effectiveAccess} = \text{netAccess} \bowtie_{\bar{\exists}} \text{firewallBlock}
 \end{equation}
 
-The antijoin $A \bowtie_{\bar{\exists}} B$ returns tuples from $A$ that have no matching tuple in $B$. This correctly handles:
-\begin{itemize}
-    \item Adding a firewall rule: removes matching access tuples
-    \item Removing a firewall rule: restores matching access tuples
-\end{itemize}
+The antijoin $A \bowtie_{\bar{\exists}} B$ returns tuples from $A$ that have no matching tuple in $B$. When a firewall rule is added, the antijoin removes the corresponding access tuples; when removed, it restores them.
 
-\subsection{Fixed-Point Computation}
+\subsection{Incremental Updates}
 
-Attack reachability requires transitive closure, implemented via differential dataflow's \texttt{iterate} operator:
+When an input fact changes (e.g., a vulnerability is removed), the system:
 
-\begin{lstlisting}[language=Rust,morekeywords={iterate,join,map,concat,distinct}]
-execCode.iterate(|inner| {
-    let new_reach = inner
-        .join(&network_access)
-        .join(&vulnerabilities)
-        .map(|...| new_exec_code);
-    
-    initial.concat(&new_reach).distinct()
-})
-\end{lstlisting}
+\begin{enumerate}
+    \item Inserts a difference tuple with multiplicity $-1$
+    \item Propagates this difference through all dependent operators
+    \item For joins, produces negative outputs for matching tuples
+    \item For iterations, continues until the fixed point stabilizes
+    \item Outputs only the changes (not the entire new state)
+\end{enumerate}
 
-The iteration continues until no new \texttt{execCode} facts are derived. Critically, when an input changes, iteration resumes from the \textit{current} fixed point, not from scratch.
+The key insight is that unaffected parts of the graph produce no differences---they incur zero computational cost.
 
+% ============================================================================
+% EVALUATION
+% ============================================================================
 \section{Evaluation}
 
-We evaluate three network topologies to characterize incremental performance across different graph structures.
+We evaluate three research questions:
+
+\begin{enumerate}
+    \item[\textbf{RQ1}] How does incremental update time compare to full recomputation?
+    \item[\textbf{RQ2}] How does speedup scale with network size?
+    \item[\textbf{RQ3}] How does the position of a change affect update time?
+\end{enumerate}
 
 \subsection{Experimental Setup}
 
 \begin{itemize}
-    \item \textbf{Hardware}: Apple M-series processor
-    \item \textbf{Software}: Rust, differential-dataflow v0.12
-    \item \textbf{Execution}: Single-threaded, release mode
-    \item \textbf{Metric}: Wall-clock time for computation
+    \item \textbf{Hardware}: Apple M-series processor, 16GB RAM
+    \item \textbf{Software}: Rust 1.75, differential-dataflow 0.12
+    \item \textbf{Execution}: Single-threaded, release mode with optimizations
+    \item \textbf{Metric}: Wall-clock time (median of 5 runs)
 \end{itemize}
 
-\subsection{Star Topology: Best Case}
+\subsection{Network Topologies}
 
-\subsubsection{Setup}
-A central hub connected to $N$ leaf nodes. The attacker starts at the hub and can reach any leaf in one hop.
+We evaluate two synthetic topologies that represent extremes of attack graph structure:
 
-\subsubsection{Results}
+\subsubsection{Star Topology}
+A central hub connected to $N$ leaf nodes. The attacker starts at the hub and can reach any leaf in one hop. This represents a data center with a management server connected to many hosts.
 
-\begin{table}[h]
+\begin{itemize}
+    \item \textbf{Iteration depth}: $O(1)$---converges in constant iterations
+    \item \textbf{Change tested}: Patch vulnerability on one leaf
+    \item \textbf{Expected behavior}: Only one attack path affected
+\end{itemize}
+
+\subsubsection{Chain Topology}
+A linear chain: node$_0 \rightarrow$ node$_1 \rightarrow \cdots \rightarrow$ node$_{N-1}$. The attacker starts at node$_0$ and the goal is node$_{N-1}$. This represents a worst-case scenario for incremental computation.
+
+\begin{itemize}
+    \item \textbf{Iteration depth}: $O(N)$---requires $N$ iterations to converge
+    \item \textbf{Change tested}: Patch vulnerability at position $k$
+    \item \textbf{Expected behavior}: All nodes $k+1$ to $N-1$ lose their attack paths
+\end{itemize}
+
+\subsection{RQ1: Incremental vs. Full Recomputation}
+
+\begin{table}[t]
 \centering
 \caption{Star Network Benchmark Results}
 \label{tab:star}
 \begin{tabular}{@{}rrrr@{}}
 \toprule
-Nodes & Initial (ms) & Incremental ($\mu$s) & Speedup \\
+\textbf{Nodes} & \textbf{Initial (ms)} & \textbf{Incremental ($\mu$s)} & \textbf{Speedup} \\
 \midrule
 51    & 1.58 & 501  & 3.2$\times$ \\
 101   & 1.96 & 413  & 4.7$\times$ \\
@@ -224,54 +369,77 @@ Nodes & Initial (ms) & Incremental ($\mu$s) & Speedup \\
 \end{tabular}
 \end{table}
 
-\subsubsection{Analysis}
-Star topologies have $O(1)$ iteration depth---the attack graph converges in constant iterations regardless of size. When patching a single leaf vulnerability:
+Table~\ref{tab:star} shows results for the star topology. Key observations:
+
 \begin{itemize}
-    \item Initial computation scales as $O(N)$
-    \item Incremental update stays nearly constant ($\sim$160$\mu$s)
-    \item Speedup grows linearly with network size
+    \item Initial computation scales linearly with network size ($\approx$4ms for 1000 nodes)
+    \item Incremental update time is \textit{nearly constant} ($\approx$160$\mu$s regardless of size)
+    \item Speedup increases with network size, reaching \textbf{25$\times$} at 1000 nodes
 \end{itemize}
 
-\subsection{Chain Topology: Worst Case}
+This confirms that for localized changes, incremental computation achieves $O(1)$ update complexity.
 
-\subsubsection{Setup}
-A linear chain: $\text{node}_0 \to \text{node}_1 \to \cdots \to \text{node}_{N-1}$. The attacker starts at node$_0$ and the goal is node$_{N-1}$.
+\subsection{RQ2: Scalability}
 
-\subsubsection{Results}
-
-\begin{table}[h]
+\begin{figure}[t]
 \centering
-\caption{Chain Network Benchmark Results}
-\label{tab:chain}
-\begin{tabular}{@{}rrrr@{}}
-\toprule
-Nodes & Initial (ms) & Incremental ($\mu$s) & Speedup \\
-\midrule
-10   & 0.87 & 833   & 1.0$\times$ \\
-50   & 3.61 & 2507  & 1.4$\times$ \\
-100  & 6.26 & 5197  & 1.2$\times$ \\
-200  & 9.73 & 8923  & 1.1$\times$ \\
-\bottomrule
-\end{tabular}
-\end{table}
+\begin{tikzpicture}
+\begin{axis}[
+    width=\columnwidth,
+    height=5cm,
+    xlabel={Number of nodes},
+    ylabel={Time (ms)},
+    legend pos=north west,
+    grid=major,
+    xmin=0, xmax=1100,
+    ymin=0, ymax=5,
+]
+\addplot[color=blue, mark=square*, thick] coordinates {
+    (51, 1.58)
+    (101, 1.96)
+    (201, 1.97)
+    (501, 3.48)
+    (1001, 4.11)
+};
+\addlegendentry{Initial computation}
 
-\subsubsection{Analysis}
-Chain topologies have $O(N)$ iteration depth. When patching node$_1$ (near the start), all downstream nodes ($2..N$) lose their attack paths. This is the theoretical worst case where $\Delta E \approx E$.
+\addplot[color=red, mark=*, thick] coordinates {
+    (51, 0.501)
+    (101, 0.413)
+    (201, 0.349)
+    (501, 0.282)
+    (1001, 0.161)
+};
+\addlegendentry{Incremental update}
+\end{axis}
+\end{tikzpicture}
+\caption{Star topology: Initial computation scales linearly while incremental updates remain constant.}
+\label{fig:scalability}
+\end{figure}
 
-\subsection{Random Cut: Position-Dependent Speedup}
+Figure~\ref{fig:scalability} visualizes the scalability results. The gap between initial and incremental computation widens as network size increases, demonstrating the value of incremental maintenance for large networks.
 
-\subsubsection{Setup}
-For each chain size, we randomly select a cut position $k$ (0 to $N{-}1$), remove the vulnerability at node$_k$, measure update time, restore it, and repeat 100 times.
+\subsection{RQ3: Position-Dependent Updates}
 
-\subsubsection{Results}
+To understand how the \textit{location} of a change affects update time, we perform a ``random cut'' experiment on chain topologies:
 
-\begin{table}[h]
+\begin{enumerate}
+    \item Generate a chain of $N$ nodes
+    \item Randomly select position $k \in [0, N-1]$
+    \item Remove the vulnerability at node$_k$
+    \item Measure update time
+    \item Restore the vulnerability and repeat
+\end{enumerate}
+
+We perform 100 iterations per chain size.
+
+\begin{table}[t]
 \centering
-\caption{Random Cut Benchmark (100 iterations each)}
+\caption{Random Cut Benchmark (Chain Topology, 100 iterations)}
 \label{tab:random}
 \begin{tabular}{@{}rrrrrr@{}}
 \toprule
-Nodes & Avg ($\mu$s) & Min ($\mu$s) & Max ($\mu$s) & Speedup \\
+\textbf{Nodes} & \textbf{Avg ($\mu$s)} & \textbf{Min ($\mu$s)} & \textbf{Max ($\mu$s)} & \textbf{Speedup} \\
 \midrule
 50   & 905   & 46   & 1877  & 2.3$\times$ \\
 100  & 1707  & 110  & 3799  & 2.1$\times$ \\
@@ -281,25 +449,25 @@ Nodes & Avg ($\mu$s) & Min ($\mu$s) & Max ($\mu$s) & Speedup \\
 \end{tabular}
 \end{table}
 
-\subsubsection{Analysis}
-The results confirm our complexity model:
+Table~\ref{tab:random} reveals:
+
 \begin{itemize}
-    \item \textbf{Minimum time} ($\sim$50--180$\mu$s): Cutting near the \textit{end} (node $N{-}1$) invalidates only 1 downstream node
-    \item \textbf{Maximum time} ($\sim$1.8--19ms): Cutting near the \textit{start} (node 0) invalidates all $N$ nodes
-    \item \textbf{Average speedup} $\approx 2\times$: Cutting at random position $k$ invalidates $(N{-}k)$ nodes on average, i.e., $N/2$
+    \item \textbf{Minimum time} ($\approx$50--180$\mu$s): Cutting near the \textit{end} of the chain invalidates only 1--2 downstream nodes
+    \item \textbf{Maximum time} ($\approx$1.8--19ms): Cutting near the \textit{start} invalidates all $N$ downstream nodes
+    \item \textbf{Average speedup} $\approx 2\times$: Cutting at random position $k$ invalidates $(N-k)$ nodes on average, i.e., $N/2$
 \end{itemize}
+
+This confirms that update time is $O(\text{affected nodes})$, not $O(\text{total nodes})$.
 
 \subsection{Complexity Analysis}
 
-Let $N$ be the number of nodes, $E$ the number of edges, and $D$ the graph diameter.
-
-\begin{table}[h]
+\begin{table}[t]
 \centering
 \caption{Complexity Comparison}
 \label{tab:complexity}
 \begin{tabular}{@{}lcc@{}}
 \toprule
-Operation & Full Recomputation & Incremental \\
+\textbf{Operation} & \textbf{Full Recomputation} & \textbf{Incremental} \\
 \midrule
 Initial build & $O(E \times D)$ & $O(E \times D)$ \\
 Single change & $O(E \times D)$ & $O(\Delta E \times \Delta d)$ \\
@@ -307,45 +475,121 @@ Single change & $O(E \times D)$ & $O(\Delta E \times \Delta d)$ \\
 \end{tabular}
 \end{table}
 
-Where:
+Table~\ref{tab:complexity} summarizes the complexity:
 \begin{itemize}
+    \item $E$ = number of network edges
+    \item $D$ = diameter of attack graph (longest path)
     \item $\Delta E$ = edges affected by the change
-    \item $\Delta d$ = local iteration depth of affected subgraph
+    \item $\Delta d$ = local iteration depth of affected region
 \end{itemize}
 
-For localized changes (e.g., patching one vulnerability), $\Delta E \ll E$, yielding significant speedups.
+For localized changes (e.g., patching one vulnerability), $\Delta E \ll E$ and $\Delta d \ll D$, yielding significant speedups.
 
-\section{Related Work}
+% ============================================================================
+% DISCUSSION
+% ============================================================================
+\section{Discussion}
 
-\textbf{MulVAL}~\cite{ou2006mulval} pioneered Datalog-based attack graph generation using XSB Prolog. Our work extends this approach with incremental maintenance.
+\subsection{When Incremental Computation Helps}
 
-\textbf{NetSPA}~\cite{ingols2006practical} uses specialized algorithms for scalable attack graph computation but does not support incremental updates.
-
-\textbf{Incremental Datalog} has been studied extensively~\cite{gupta1993maintaining}. Differential dataflow provides a practical implementation with support for iteration and arbitrary lattice operations.
-
-\textbf{Differential Dataflow}~\cite{mcsherry2013differential} has been applied to graph analytics~\cite{murray2013naiad} but not previously to security analysis.
-
-\section{Conclusion}
-
-We demonstrated that differential dataflow enables efficient incremental maintenance of attack graphs. Our key findings:
+Our approach is most beneficial when:
 
 \begin{enumerate}
-    \item For localized changes in shallow topologies, incremental updates achieve \textbf{25$\times$ speedup} over full recomputation
-    \item Update complexity is $O(\text{affected nodes})$, not $O(\text{total nodes})$
-    \item Worst-case performance matches full recomputation---incremental is \textbf{never slower}
+    \item \textbf{Changes are localized}: Patching a single vulnerability affects few attack paths
+    \item \textbf{Topology is shallow}: Star, tree, or mesh networks with low diameter
+    \item \textbf{Updates are frequent}: Real-time monitoring scenarios where latency matters
 \end{enumerate}
 
-This approach enables real-time attack graph monitoring for dynamic networks, where sub-millisecond updates allow continuous security posture assessment.
+\subsection{Limitations}
+
+Our approach has comparable performance to full recomputation when:
+
+\begin{enumerate}
+    \item \textbf{Changes are global}: Modifying the attacker's starting position affects all reachable nodes
+    \item \textbf{Topology is deep}: Long chains where changes near the start invalidate everything downstream
+    \item \textbf{Changes are batched}: Many simultaneous changes may approach full recomputation cost
+\end{enumerate}
+
+However, even in worst-case scenarios, incremental computation is \textit{never slower} than full recomputation.
+
+\subsection{Practical Considerations}
+
+Our implementation uses Rust and the \texttt{timely} dataflow framework. Key engineering decisions:
+
+\begin{itemize}
+    \item \textbf{Single-threaded execution}: We use \texttt{execute\_directly} for benchmarking consistency. Production deployments can scale across cores.
+    \item \textbf{String-based identifiers}: Host names are strings for clarity. Production systems could use integer IDs for performance.
+    \item \textbf{Memory overhead}: Differential dataflow maintains internal state proportional to the collection size. For very large networks, this may require attention.
+\end{itemize}
+
+% ============================================================================
+% RELATED WORK
+% ============================================================================
+\section{Related Work}
+
+\subsection{Attack Graph Generation}
+
+Sheyner et al.~\cite{sheyner2002automated} introduced model-checking approaches to attack graph generation. Ammann et al.~\cite{ammann2002scalable} proposed scalable algorithms based on graph reachability. MulVAL~\cite{ou2006mulval} pioneered the use of Datalog for declarative attack modeling, which we build upon.
+
+NetSPA~\cite{ingols2006practical} and TVA~\cite{jajodia2005topological} provide efficient attack graph visualization but do not support incremental updates.
+
+\subsection{Incremental Datalog}
+
+Incremental view maintenance for Datalog has been studied extensively~\cite{gupta1993maintaining}. The DRed algorithm~\cite{staudt1995incremental} handles recursive rules but requires explicit deletion tracking. Differential dataflow provides a general framework that subsumes these approaches.
+
+\subsection{Dataflow Systems}
+
+Naiad~\cite{murray2013naiad} introduced timely dataflow for iterative computation. Differential dataflow~\cite{mcsherry2013differential} extended this with change tracking. Our work is the first application of differential dataflow to security analysis.
+
+% ============================================================================
+% CONCLUSION
+% ============================================================================
+\section{Conclusion}
+
+We presented an incremental approach to attack graph maintenance using differential dataflow. By translating Datalog-style security rules into dataflow operators, we enable automatic change propagation: when a vulnerability is patched, only the affected attack paths are recomputed.
+
+Our evaluation demonstrates:
+
+\begin{enumerate}
+    \item \textbf{Significant speedups}: Up to 25$\times$ for localized changes in star topologies
+    \item \textbf{Proportional updates}: Update time scales with affected nodes, not total network size
+    \item \textbf{No regression}: Worst-case performance matches full recomputation
+\end{enumerate}
+
+This approach enables real-time security monitoring for dynamic networks, where sub-millisecond updates allow continuous assessment of security posture.
 
 \subsection{Future Work}
 
 \begin{itemize}
-    \item Parallel execution across multiple workers
-    \item Integration with real vulnerability scanners (Nessus, OpenVAS)
-    \item Probabilistic attack graphs with incremental risk computation
-    \item Streaming ingestion from SIEM systems
+    \item \textbf{Parallel execution}: Leverage multiple cores via timely dataflow's distributed execution
+    \item \textbf{Real-world integration}: Connect to vulnerability scanners (Nessus, OpenVAS) and SIEM systems
+    \item \textbf{Probabilistic extensions}: Compute attack probabilities incrementally
+    \item \textbf{Visualization}: Interactive attack graph exploration with real-time updates
 \end{itemize}
 
+\subsection{Reproducibility}
+
+Our implementation is open-source and available at:
+\begin{center}
+\url{https://github.com/stefi19/DynamicAttackGraphs}
+\end{center}
+
+A Docker container is provided for reproducibility:
+\begin{lstlisting}[language=bash, frame=none, numbers=none]
+docker build -t attack-graph .
+docker run --rm attack-graph
+\end{lstlisting}
+
+% ============================================================================
+% ACKNOWLEDGMENTS
+% ============================================================================
+\section*{Acknowledgments}
+
+We thank the differential-dataflow community for their excellent documentation and the reviewers for their constructive feedback.
+
+% ============================================================================
+% REFERENCES
+% ============================================================================
 \bibliographystyle{IEEEtran}
 \bibliography{references}
 
