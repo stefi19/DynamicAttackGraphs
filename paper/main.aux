@@ -1,0 +1,82 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{sheyner2002automated}
+\citation{cvedetails}
+\citation{ou2006mulval}
+\citation{ingols2006practical}
+\citation{mcsherry2013differential}
+\citation{ou2006mulval}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-A}}Motivation}{1}{subsection.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-B}}Contribution}{1}{subsection.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {II}Background}{1}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Attack Graphs and MulVAL}{1}{subsection.2.1}\protected@file@percent }
+\citation{mcsherry2013differential}
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {1}MulVAL lateral movement rule}{2}{lstlisting.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-B}}The Recomputation Problem}{2}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-C}}Differential Dataflow}{2}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {III}System Design}{2}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Architecture Overview}{2}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Rule Translation}{2}{subsection.3.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Differential dataflow graph for attack graph computation. Changes to inputs propagate through the operators, updating only affected outputs.}}{2}{figure.1}\protected@file@percent }
+\newlabel{fig:dataflow}{{1}{2}{Differential dataflow graph for attack graph computation. Changes to inputs propagate through the operators, updating only affected outputs}{figure.1}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}1}Handling Recursion}{2}{subsubsection.3.2.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {2}Recursive reachability in differential dataflow}{2}{lstlisting.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}2}Handling Negation with Antijoin}{2}{subsubsection.3.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Incremental Updates}{2}{subsection.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Evaluation}{3}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Experimental Setup}{3}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Network Topologies}{3}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-B}1}Star Topology}{3}{subsubsection.4.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-B}2}Chain Topology}{3}{subsubsection.4.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}RQ1: Incremental vs. Full Recomputation}{3}{subsection.4.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Star Network Benchmark Results}}{3}{table.1}\protected@file@percent }
+\newlabel{tab:star}{{I}{3}{Star Network Benchmark Results}{table.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Star topology: Initial computation vs. incremental update times.}}{3}{figure.2}\protected@file@percent }
+\newlabel{fig:scalability}{{2}{3}{Star topology: Initial computation vs. incremental update times}{figure.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}RQ2: Scalability}{3}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-E}}RQ3: Position-Dependent Updates}{3}{subsection.4.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Random Cut Benchmark (Chain Topology, 100 iterations)}}{3}{table.2}\protected@file@percent }
+\newlabel{tab:random}{{II}{3}{Random Cut Benchmark (Chain Topology, 100 iterations)}{table.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {V}Discussion}{3}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Performance Analysis}{3}{subsection.5.1}\protected@file@percent }
+\citation{sheyner2002automated}
+\citation{ammann2002scalable}
+\citation{ou2006mulval}
+\citation{ingols2006practical}
+\citation{jajodia2005topological}
+\citation{gupta1993maintaining}
+\citation{staudt1995incremental}
+\citation{murray2013naiad}
+\citation{mcsherry2013differential}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Impact of cut position on update time. Cuts near the start of the chain ($k/N \approx 0$) incur higher costs than cuts near the end ($k/N \approx 1$).}}{4}{figure.3}\protected@file@percent }
+\newlabel{fig:position_cost}{{3}{4}{Impact of cut position on update time. Cuts near the start of the chain ($k/N \approx 0$) incur higher costs than cuts near the end ($k/N \approx 1$)}{figure.3}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-A}1}Scalability}{4}{subsubsection.5.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-A}2}Update Complexity}{4}{subsubsection.5.1.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Complexity Comparison}}{4}{table.3}\protected@file@percent }
+\newlabel{tab:complexity}{{III}{4}{Complexity Comparison}{table.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Applicability}{4}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-C}}Practical Considerations}{4}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Related Work}{4}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Attack Graph Generation}{4}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Incremental Datalog}{4}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-C}}Dataflow Systems}{4}{subsection.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Conclusion}{4}{section.7}\protected@file@percent }
+\bibstyle{IEEEtran}
+\bibdata{references}
+\bibcite{sheyner2002automated}{1}
+\bibcite{cvedetails}{2}
+\bibcite{ou2006mulval}{3}
+\bibcite{ingols2006practical}{4}
+\bibcite{mcsherry2013differential}{5}
+\bibcite{ammann2002scalable}{6}
+\bibcite{jajodia2005topological}{7}
+\bibcite{gupta1993maintaining}{8}
+\bibcite{staudt1995incremental}{9}
+\bibcite{murray2013naiad}{10}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-A}}Future Work}{5}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-B}}Reproducibility}{5}{subsection.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{References}{5}{section*.1}\protected@file@percent }
+\gdef \@abspage@last{5}
