@@ -40,8 +40,16 @@ Collection[t] = sum of all (data, diff) where time <= t
 ```
 
 If the sum for a record is:
-- Positive: Record is present
+- Positive: Record is present with that multiplicity
 - Zero: Record is absent
+- Negative: Usually represents more deletions than insertions and should not
+  persist for ordinary set-like input collections
+
+For the attack graph rules in this project, the intended logical view is
+set-like: a fact is present when its accumulated multiplicity is non-zero after
+consolidation. Multiple derivations may contribute multiple positive
+multiplicities internally, and retractions contribute negative multiplicities.
+The accumulated value determines whether the record remains visible.
 
 ### Operators Work on Differences
 
@@ -63,18 +71,37 @@ This is the key insight: we only process changes, not the full data.
 | Aspect | DRed | Differential Dataflow |
 |--------|------|----------------------|
 | Deletion handling | Over-delete, then rederive | Changes cancel mathematically |
-| Rederivation | Explicit second pass | Implicit through diff arithmetic |
-| Multiple derivations | Must track and re-check | Diffs accumulate naturally |
+| Rederivation | Explicit second pass over threatened facts | Operators propagate signed differences |
+| Multiple derivations | May be recovered during rederivation | Reflected by accumulated multiplicities |
+| Project status | Not implemented directly | The implemented execution model |
+
+DRed is an algorithm for maintaining a materialisation after deletions. It first
+removes facts that may depend on deleted input, then tries to rederive facts
+that still have valid proofs. Differential Dataflow does not implement this
+overdelete-and-rederive procedure. Instead, each input change becomes a signed
+difference, and the dataflow operators propagate the consequences of that
+difference through the rule graph.
 
 ### Compared to B/F
 
 | Aspect | B/F Algorithm | Differential Dataflow |
 |--------|--------------|----------------------|
-| Counting derivations | Explicit count per fact | Implicit in diff accumulation |
-| When fact disappears | Count reaches 0 | Sum of diffs reaches 0 |
-| Provenance | Stored separately | Encoded in the diff stream |
+| Core deletion strategy | Backward proof checking plus forward propagation | Signed-difference propagation through operators |
+| Alternate proofs | Checked by backward chaining before deletion is final | Represented indirectly by remaining positive multiplicity |
+| Counting derivations | Not simply a counting algorithm | Uses diff/multiplicity arithmetic |
+| When fact disappears | No alternate proof is found and consequences are propagated | Accumulated multiplicity reaches zero |
+| Provenance | Reasoning process can inspect proofs | Not retained automatically by the diff stream |
 
-Both approaches use counting to determine when a derived fact should be removed. B/F counts explicitly; differential dataflow achieves the same through diff arithmetic.
+B/F, as described by Motik et al., avoids DRed overdeletion by using backward
+and forward chaining to check for alternate proofs. Differential Dataflow is
+related because it also prevents unsupported records from remaining present
+after updates, but it does so through diff accumulation rather than by directly
+running B/F proof checks. The two should therefore be compared as different
+incremental maintenance strategies, not treated as the same algorithm.
+
+This prototype is a Differential Dataflow implementation of a subset of
+MulVAL-style attack graph rules. It is not a direct B/F implementation, and it
+does not expose a derivation-count table as its maintenance mechanism.
 
 ---
 
