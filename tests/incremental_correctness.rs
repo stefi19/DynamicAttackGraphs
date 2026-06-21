@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use differential_dataflow::input::{Input, InputSession};
 use dynamic_attack_graphs::{
-    build_attack_graph, AttackerCodeExecution, AttackerGoalReached, AttackerOwnsMachine,
-    AttackerStartingPosition, AttackerTargetGoal, FirewallRuleRecord, NetworkAccessRule,
-    PrivilegeLevel, VulnerabilityRecord,
+    build_attack_graph, evaluate_attack_graph_naive, AttackerCodeExecution, AttackerGoalReached,
+    AttackerOwnsMachine, AttackerStartingPosition, AttackerTargetGoal, FirewallRuleRecord,
+    NetworkAccessRule, PrivilegeLevel, VulnerabilityRecord,
 };
 use timely::dataflow::operators::probe::Handle;
 
@@ -354,6 +354,42 @@ fn assert_incremental_update_matches_recompute(
     (initial_output, incremental_after_update)
 }
 
+fn assert_dataflow_matches_naive(facts: BaseFacts) {
+    let dataflow_output = collect_recomputed_outputs(facts.clone());
+    let naive_output = evaluate_attack_graph_naive(
+        facts.vulnerabilities,
+        facts.network_access,
+        facts.firewall_rules,
+        facts.attacker_positions,
+        facts.attacker_goals,
+    );
+
+    assert_eq!(
+        dataflow_output.exec_code,
+        naive_output
+            .code_executions
+            .into_iter()
+            .map(|fact| (fact, 1))
+            .collect()
+    );
+    assert_eq!(
+        dataflow_output.owns_machine,
+        naive_output
+            .machines_owned
+            .into_iter()
+            .map(|fact| (fact, 1))
+            .collect()
+    );
+    assert_eq!(
+        dataflow_output.goals_reached,
+        naive_output
+            .goals_reached
+            .into_iter()
+            .map(|fact| (fact, 1))
+            .collect()
+    );
+}
+
 #[test]
 fn simple_chain_update_matches_recompute() {
     let facts = chain_base_facts();
@@ -495,4 +531,65 @@ fn alternate_path_patch_still_reaches_goal_and_matches_recompute() {
         .exec_code
         .contains_key(&exec_on("db", PrivilegeLevel::Root)));
     assert!(after_update.goals_reached.contains_key(&reached("db")));
+}
+
+#[test]
+fn naive_oracle_matches_dataflow_on_simple_chain() {
+    let mut facts = chain_base_facts();
+    facts
+        .network_access
+        .push(NetworkAccessRule::new("web", "db", "postgres"));
+
+    assert_dataflow_matches_naive(facts);
+}
+
+#[test]
+fn naive_oracle_matches_dataflow_with_firewall_deny() {
+    let mut facts = chain_base_facts();
+    facts
+        .network_access
+        .push(NetworkAccessRule::new("web", "db", "postgres"));
+    facts
+        .firewall_rules
+        .push(FirewallRuleRecord::create_deny_rule(
+            "internet", "web", "https",
+        ));
+
+    assert_dataflow_matches_naive(facts);
+}
+
+#[test]
+fn naive_oracle_matches_dataflow_with_alternate_path_patch() {
+    let mut facts = BaseFacts {
+        vulnerabilities: vec![
+            VulnerabilityRecord::new("web_a", "CVE-WEB-A", "https", PrivilegeLevel::User),
+            VulnerabilityRecord::new("web_b", "CVE-WEB-B", "https", PrivilegeLevel::User),
+            VulnerabilityRecord::new("db", "CVE-DB", "postgres", PrivilegeLevel::Root),
+        ],
+        network_access: vec![
+            NetworkAccessRule::new("internet", "web_a", "https"),
+            NetworkAccessRule::new("internet", "web_b", "https"),
+            NetworkAccessRule::new("web_a", "db", "postgres"),
+            NetworkAccessRule::new("web_b", "db", "postgres"),
+        ],
+        firewall_rules: Vec::new(),
+        attacker_positions: vec![AttackerStartingPosition::new(
+            "attacker",
+            "internet",
+            PrivilegeLevel::User,
+        )],
+        attacker_goals: vec![AttackerTargetGoal::new("attacker", "db")],
+    };
+
+    apply_updates_to_facts(
+        &mut facts,
+        &[FactUpdate::RemoveVulnerability(VulnerabilityRecord::new(
+            "web_a",
+            "CVE-WEB-A",
+            "https",
+            PrivilegeLevel::User,
+        ))],
+    );
+
+    assert_dataflow_matches_naive(facts);
 }
