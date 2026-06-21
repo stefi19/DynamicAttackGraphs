@@ -22,18 +22,19 @@ reachable(X, Y) :- connected(X, Y).
 reachable(X, Y) :- connected(X, Z), reachable(Z, Y).
 ```
 
-Problems for attack graphs:
+Problems for naive top-down evaluation:
 1. Cyclic attack paths can cause infinite loops
 2. Results depend on clause ordering
-3. May miss valid derivations due to depth-first search
-4. No natural support for incremental updates
+3. Naive top-down Prolog evaluation can be sensitive to recursion, clause
+   ordering, and termination unless tabling or other mechanisms are used
+4. Dynamic incremental maintenance is not part of the standard MulVAL workflow
 
 ### Datalog's Advantages
 
 Datalog uses bottom-up evaluation:
 
 ```datalog
-% Datalog always terminates
+% Function-free Datalog over finite domains terminates under bottom-up evaluation
 reachable(X, Y) :- connected(X, Y).
 reachable(X, Y) :- connected(X, Z), reachable(Z, Y).
 ```
@@ -42,9 +43,9 @@ Comparison:
 
 | Property | Prolog | Datalog |
 |----------|--------|---------|
-| Termination | Not guaranteed | Always terminates |
-| Completeness | May miss answers | Computes all answers |
-| Cycles | Problematic | Handled naturally |
+| Termination | Not guaranteed for naive top-down recursion | Terminates for function-free finite-domain programs |
+| Completeness | Depends on evaluation strategy and tabling | Computes the least fixpoint under bottom-up evaluation |
+| Cycles | Require care | Handled naturally by fixpoint evaluation |
 | Parallelization | Difficult | Natural |
 | Incrementality | Hard to implement | Well-studied |
 
@@ -143,15 +144,18 @@ Attack graphs have properties that make precise incremental maintenance useful:
 ### The Research Gap
 
 Current state:
-- MulVAL uses XSB Prolog with no incremental support
-- Most tools re-compute from scratch on changes
-- No open implementation of efficient incremental updates for attack graphs
+- MulVAL uses XSB Prolog with tabling, but the standard evaluated workflow does
+  not provide Differential Dataflow-style dynamic maintenance after base-fact
+  updates
+- Most attack graph workflows re-compute from scratch on changes
+- There are few open research prototypes evaluating differential incremental
+  maintenance for MulVAL-style attack graph rules
 
 Our contribution:
 - Using differential dataflow as a practical implementation
 - It provides incremental maintenance through differential updates and
   multiplicity arithmetic
-- It's open-source and production-ready
+- It is an open-source research prototype
 - It supports streaming updates
 
 ---
