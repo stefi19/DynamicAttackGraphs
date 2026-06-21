@@ -960,6 +960,49 @@ pub struct RandomCutBenchmarkResults {
     pub average_incremental_vs_recompute_speedup: f64,
 }
 
+#[derive(Debug, Clone)]
+pub struct EnterpriseBenchmarkResults {
+    pub update_pattern: EnterpriseUpdatePattern,
+    pub number_of_nodes: usize,
+    pub number_of_edges: usize,
+    pub number_of_vulnerabilities: usize,
+    pub changed_base_facts: usize,
+    pub initial_computation_time: Duration,
+    pub incremental_update_time: Duration,
+    pub full_recomputation_after_update_time: Duration,
+    pub incremental_vs_recompute_speedup: f64,
+    pub derived_facts_before_update: usize,
+    pub derived_facts_after_update: usize,
+    pub changed_derived_facts: usize,
+}
+
+impl EnterpriseBenchmarkResults {
+    pub fn print_summary(&self) {
+        println!("=== ENTERPRISE BENCHMARK RESULT ===");
+        println!("Update pattern: {}", self.update_pattern.label());
+        println!("Nodes: {}", self.number_of_nodes);
+        println!("Network edges: {}", self.number_of_edges);
+        println!("Vulnerabilities: {}", self.number_of_vulnerabilities);
+        println!("Changed base facts: {}", self.changed_base_facts);
+        println!("Initial computation: {:?}", self.initial_computation_time);
+        println!("Incremental update:  {:?}", self.incremental_update_time);
+        println!(
+            "Full recomputation after update: {:?}",
+            self.full_recomputation_after_update_time
+        );
+        println!(
+            "Incremental vs recompute speedup: {:.2}x",
+            self.incremental_vs_recompute_speedup
+        );
+        println!(
+            "Derived facts: {} before update, {} after update",
+            self.derived_facts_before_update, self.derived_facts_after_update
+        );
+        println!("Changed derived fact count: {}", self.changed_derived_facts);
+        println!();
+    }
+}
+
 pub fn run_chain_random_cut_benchmark(
     number_of_nodes: usize,
     iterations: usize,
@@ -1198,6 +1241,194 @@ pub fn run_chain_random_cut_benchmark(
     }
 }
 
+pub fn run_enterprise_benchmark(
+    config: EnterpriseScenarioConfig,
+) -> Vec<EnterpriseBenchmarkResults> {
+    let scenario = generate_layered_enterprise_network(config);
+    let update_patterns = [
+        EnterpriseUpdatePattern::PatchOneWebVulnerability,
+        EnterpriseUpdatePattern::PatchOneAppVulnerability,
+        EnterpriseUpdatePattern::AddDmzToAppFirewallDeny,
+        EnterpriseUpdatePattern::BatchPatchTenPercent,
+    ];
+
+    update_patterns
+        .into_iter()
+        .map(|pattern| run_enterprise_benchmark_for_update(&scenario, pattern))
+        .collect()
+}
+
+pub fn run_enterprise_benchmark_for_update(
+    scenario: &EnterpriseScenario,
+    pattern: EnterpriseUpdatePattern,
+) -> EnterpriseBenchmarkResults {
+    let update = apply_enterprise_update_pattern(scenario, pattern);
+    let initial_recomputation = measure_full_recomputation(
+        &scenario.network_access,
+        &scenario.vulnerabilities,
+        &scenario.firewall_rules,
+        &scenario.attacker_positions,
+        &scenario.attacker_goals,
+    );
+    let recomputation_after_update = measure_full_recomputation(
+        &update.updated_scenario.network_access,
+        &update.updated_scenario.vulnerabilities,
+        &update.updated_scenario.firewall_rules,
+        &update.updated_scenario.attacker_positions,
+        &update.updated_scenario.attacker_goals,
+    );
+
+    let (initial_computation_time, incremental_update_time) =
+        measure_enterprise_incremental_update(scenario, &update);
+    let incremental_vs_recompute_speedup = if incremental_update_time.as_nanos() > 0 {
+        recomputation_after_update.computation_time.as_secs_f64()
+            / incremental_update_time.as_secs_f64()
+    } else {
+        f64::INFINITY
+    };
+
+    EnterpriseBenchmarkResults {
+        update_pattern: pattern,
+        number_of_nodes: scenario.number_of_nodes(),
+        number_of_edges: scenario.network_access.len(),
+        number_of_vulnerabilities: scenario.vulnerabilities.len(),
+        changed_base_facts: update.changed_base_fact_count(),
+        initial_computation_time,
+        incremental_update_time,
+        full_recomputation_after_update_time: recomputation_after_update.computation_time,
+        incremental_vs_recompute_speedup,
+        derived_facts_before_update: initial_recomputation.derived_fact_count,
+        derived_facts_after_update: recomputation_after_update.derived_fact_count,
+        changed_derived_facts: initial_recomputation
+            .derived_fact_count
+            .abs_diff(recomputation_after_update.derived_fact_count),
+    }
+}
+
+fn measure_enterprise_incremental_update(
+    scenario: &EnterpriseScenario,
+    update: &EnterpriseScenarioUpdate,
+) -> (Duration, Duration) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    let scenario = scenario.clone();
+    let removed_vulnerabilities = update.removed_vulnerabilities.clone();
+    let added_firewall_rules = update.added_firewall_rules.clone();
+    let initial_nanos = Arc::new(AtomicU64::new(0));
+    let incremental_nanos = Arc::new(AtomicU64::new(0));
+    let initial_clone = Arc::clone(&initial_nanos);
+    let incremental_clone = Arc::clone(&incremental_nanos);
+
+    timely::execute_directly(move |worker| {
+        let mut probe = Handle::new();
+
+        let (
+            mut vulnerability_input,
+            mut network_input,
+            mut firewall_input,
+            mut attacker_position_input,
+            mut attacker_goal_input,
+        ) = worker.dataflow::<usize, _, _>(|scope| {
+            let (vuln_handle, vuln_collection) =
+                scope.new_collection::<VulnerabilityRecord, isize>();
+            let (network_handle, network_collection) =
+                scope.new_collection::<NetworkAccessRule, isize>();
+            let (firewall_handle, firewall_collection) =
+                scope.new_collection::<FirewallRuleRecord, isize>();
+            let (position_handle, position_collection) =
+                scope.new_collection::<AttackerStartingPosition, isize>();
+            let (goal_handle, goal_collection) =
+                scope.new_collection::<AttackerTargetGoal, isize>();
+
+            let (exec_code, _owns_machine, _goals_reached) = build_attack_graph(
+                &vuln_collection,
+                &network_collection,
+                &firewall_collection,
+                &position_collection,
+                &goal_collection,
+            );
+
+            exec_code.consolidate().probe_with(&mut probe);
+
+            (
+                vuln_handle,
+                network_handle,
+                firewall_handle,
+                position_handle,
+                goal_handle,
+            )
+        });
+
+        let start_initial = Instant::now();
+
+        for network_rule in &scenario.network_access {
+            network_input.insert(network_rule.clone());
+        }
+        for vulnerability in &scenario.vulnerabilities {
+            vulnerability_input.insert(vulnerability.clone());
+        }
+        for firewall_rule in &scenario.firewall_rules {
+            firewall_input.insert(firewall_rule.clone());
+        }
+        for position in &scenario.attacker_positions {
+            attacker_position_input.insert(position.clone());
+        }
+        for goal in &scenario.attacker_goals {
+            attacker_goal_input.insert(goal.clone());
+        }
+
+        vulnerability_input.advance_to(1);
+        network_input.advance_to(1);
+        firewall_input.advance_to(1);
+        attacker_position_input.advance_to(1);
+        attacker_goal_input.advance_to(1);
+        vulnerability_input.flush();
+        network_input.flush();
+        firewall_input.flush();
+        attacker_position_input.flush();
+        attacker_goal_input.flush();
+
+        while probe.less_than(&1) {
+            worker.step();
+        }
+
+        let initial_elapsed = start_initial.elapsed();
+        let start_incremental = Instant::now();
+
+        for vulnerability in &removed_vulnerabilities {
+            vulnerability_input.remove(vulnerability.clone());
+        }
+        for firewall_rule in &added_firewall_rules {
+            firewall_input.insert(firewall_rule.clone());
+        }
+
+        vulnerability_input.advance_to(2);
+        network_input.advance_to(2);
+        firewall_input.advance_to(2);
+        attacker_position_input.advance_to(2);
+        attacker_goal_input.advance_to(2);
+        vulnerability_input.flush();
+        network_input.flush();
+        firewall_input.flush();
+        attacker_position_input.flush();
+        attacker_goal_input.flush();
+
+        while probe.less_than(&2) {
+            worker.step();
+        }
+
+        let incremental_elapsed = start_incremental.elapsed();
+        initial_clone.store(initial_elapsed.as_nanos() as u64, Ordering::SeqCst);
+        incremental_clone.store(incremental_elapsed.as_nanos() as u64, Ordering::SeqCst);
+    });
+
+    (
+        Duration::from_nanos(initial_nanos.load(Ordering::SeqCst)),
+        Duration::from_nanos(incremental_nanos.load(Ordering::SeqCst)),
+    )
+}
+
 // Print results table for random cut benchmark
 pub fn print_random_cut_benchmark_table(results: &[RandomCutBenchmarkResults]) {
     println!(
@@ -1221,6 +1452,32 @@ pub fn print_random_cut_benchmark_table(results: &[RandomCutBenchmarkResults]) {
             result.max_incremental_time.as_secs_f64() * 1_000_000.0,
             result.average_speedup,
             result.average_incremental_vs_recompute_speedup,
+        );
+    }
+}
+
+pub fn print_enterprise_benchmark_table(results: &[EnterpriseBenchmarkResults]) {
+    println!(
+        "| Update | Nodes | Edges | Vulns | Changed Base | Initial (ms) | Incremental (us) | Recompute (ms) | Recompute Speedup | Facts Before | Facts After | Changed Facts |"
+    );
+    println!(
+        "|--------|------:|------:|------:|-------------:|-------------:|-----------------:|---------------:|------------------:|-------------:|------------:|--------------:|"
+    );
+    for result in results {
+        println!(
+            "| {} | {:>5} | {:>5} | {:>5} | {:>12} | {:>12.2} | {:>16.2} | {:>14.2} | {:>17.1}x | {:>12} | {:>11} | {:>13} |",
+            result.update_pattern.label(),
+            result.number_of_nodes,
+            result.number_of_edges,
+            result.number_of_vulnerabilities,
+            result.changed_base_facts,
+            result.initial_computation_time.as_secs_f64() * 1000.0,
+            result.incremental_update_time.as_secs_f64() * 1_000_000.0,
+            result.full_recomputation_after_update_time.as_secs_f64() * 1000.0,
+            result.incremental_vs_recompute_speedup,
+            result.derived_facts_before_update,
+            result.derived_facts_after_update,
+            result.changed_derived_facts,
         );
     }
 }
