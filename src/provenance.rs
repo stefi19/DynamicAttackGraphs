@@ -99,6 +99,36 @@ impl ExplanationTree {
             children,
         }
     }
+
+    pub fn to_pretty_string(&self) -> String {
+        let mut output = self.fact.to_string();
+        output.push('\n');
+        self.write_children("", &mut output);
+        output
+    }
+
+    fn write_children(&self, prefix: &str, output: &mut String) {
+        for (index, child) in self.children.iter().enumerate() {
+            let is_last = index + 1 == self.children.len();
+            output.push_str(prefix);
+            output.push_str(if is_last { "└── " } else { "├── " });
+            output.push_str(&child.fact.to_string());
+            output.push('\n');
+
+            let child_prefix = if is_last {
+                format!("{prefix}    ")
+            } else {
+                format!("{prefix}│   ")
+            };
+            child.write_children(&child_prefix, output);
+        }
+    }
+}
+
+impl fmt::Display for ExplanationTree {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.to_pretty_string())
+    }
 }
 
 impl From<&VulnerabilityRecord> for Fact {
@@ -562,5 +592,137 @@ impl Explainer {
             ),
             vec![ExplanationTree::leaf(network_fact)],
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explains_goal_reached_through_two_hop_attack_path() {
+        let base_facts = ProvenanceBaseFacts {
+            vulnerabilities: vec![
+                VulnerabilityRecord::new("db01", "CVE-2024-DB", "postgres", PrivilegeLevel::Root),
+                VulnerabilityRecord::new("admin01", "CVE-2024-8888", "smb", PrivilegeLevel::Root),
+            ],
+            network_access: vec![
+                NetworkAccessRule::new("internet", "db01", "postgres"),
+                NetworkAccessRule::new("db01", "admin01", "smb"),
+            ],
+            firewall_rules: Vec::new(),
+            attacker_positions: vec![AttackerStartingPosition::new(
+                "eve",
+                "internet",
+                PrivilegeLevel::User,
+            )],
+            attacker_goals: vec![AttackerTargetGoal::new("eve", "admin01")],
+        };
+        let derived_facts = ProvenanceDerivedFacts {
+            effective_network_access: vec![
+                EffectiveNetworkAccess {
+                    source_host: "internet".to_string(),
+                    destination_host: "db01".to_string(),
+                    service_name: "postgres".to_string(),
+                },
+                EffectiveNetworkAccess {
+                    source_host: "db01".to_string(),
+                    destination_host: "admin01".to_string(),
+                    service_name: "smb".to_string(),
+                },
+            ],
+            code_executions: vec![
+                AttackerCodeExecution {
+                    attacker_id: "eve".to_string(),
+                    compromised_host: "internet".to_string(),
+                    obtained_privilege: PrivilegeLevel::User,
+                },
+                AttackerCodeExecution {
+                    attacker_id: "eve".to_string(),
+                    compromised_host: "db01".to_string(),
+                    obtained_privilege: PrivilegeLevel::Root,
+                },
+                AttackerCodeExecution {
+                    attacker_id: "eve".to_string(),
+                    compromised_host: "admin01".to_string(),
+                    obtained_privilege: PrivilegeLevel::Root,
+                },
+            ],
+            machines_owned: vec![AttackerOwnsMachine {
+                attacker_id: "eve".to_string(),
+                owned_host: "admin01".to_string(),
+            }],
+            goals_reached: vec![AttackerGoalReached {
+                attacker_id: "eve".to_string(),
+                reached_target: "admin01".to_string(),
+            }],
+        };
+
+        let explainer = Explainer::new(base_facts, derived_facts);
+        let target = Fact::GoalReached {
+            attacker_id: "eve".to_string(),
+            target: "admin01".to_string(),
+        };
+        let explanation = explainer
+            .explain(&target)
+            .expect("goal should have one reconstructed proof");
+
+        assert_eq!(
+            explanation
+                .derivation
+                .as_ref()
+                .expect("goal should be derived")
+                .rule_name,
+            "goal_reached_from_goal_and_ownership"
+        );
+        assert_eq!(
+            explanation.to_pretty_string(),
+            concat!(
+                "goalReached(eve, admin01)\n",
+                "├── attackGoal(eve, admin01)\n",
+                "└── ownsMachine(eve, admin01)\n",
+                "    └── execCode(eve, admin01, root)\n",
+                "        ├── execCode(eve, db01, root)\n",
+                "        │   ├── execCode(eve, internet, user)\n",
+                "        │   │   └── attackerLocated(eve, internet, user)\n",
+                "        │   ├── effectiveAccess(internet, db01, postgres)\n",
+                "        │   │   └── hacl(internet, db01, postgres)\n",
+                "        │   └── vulExists(db01, CVE-2024-DB, postgres, root)\n",
+                "        ├── effectiveAccess(db01, admin01, smb)\n",
+                "        │   └── hacl(db01, admin01, smb)\n",
+                "        └── vulExists(admin01, CVE-2024-8888, smb, root)\n",
+            )
+        );
+    }
+
+    #[test]
+    fn refuses_effective_access_when_firewall_deny_exists() {
+        let base_facts = ProvenanceBaseFacts {
+            vulnerabilities: Vec::new(),
+            network_access: vec![NetworkAccessRule::new("internet", "web01", "https")],
+            firewall_rules: vec![FirewallRuleRecord::create_deny_rule(
+                "internet", "web01", "https",
+            )],
+            attacker_positions: Vec::new(),
+            attacker_goals: Vec::new(),
+        };
+        let derived_facts = ProvenanceDerivedFacts {
+            effective_network_access: vec![EffectiveNetworkAccess {
+                source_host: "internet".to_string(),
+                destination_host: "web01".to_string(),
+                service_name: "https".to_string(),
+            }],
+            code_executions: Vec::new(),
+            machines_owned: Vec::new(),
+            goals_reached: Vec::new(),
+        };
+        let explainer = Explainer::new(base_facts, derived_facts);
+        let target = Fact::EffectiveAccess {
+            source: "internet".to_string(),
+            destination: "web01".to_string(),
+            service: "https".to_string(),
+        };
+
+        assert_eq!(explainer.explain(&target), None);
     }
 }
