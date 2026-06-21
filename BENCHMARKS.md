@@ -67,10 +67,14 @@ the original initial and incremental timings in the output.
 
 The star topology has **O(1) iteration depth** - the attack graph converges in a constant number of iterations regardless of size. When we patch one leaf, only that leaf's attack path is affected.
 
-### Results
+### Illustrative Results
 
-| Nodes | Initial (ms) | Incremental (µs) | Speedup |
-|------:|-------------:|-----------------:|--------:|
+The following table is retained as historical illustrative output. Its speedup
+column compares initial computation time with incremental update time; it should
+not be reported as the recomputation-after-update speedup.
+
+| Nodes | Initial (ms) | Incremental (µs) | Initial speedup |
+|------:|-------------:|-----------------:|----------------:|
 | 51    | 1.58         | 501.08           | 3.2x    |
 | 101   | 1.96         | 413.25           | 4.7x    |
 | 201   | 1.97         | 349.25           | 5.6x    |
@@ -81,11 +85,14 @@ The star topology has **O(1) iteration depth** - the attack graph converges in a
 
 1. **Initial computation scales linearly** with network size (~4ms for 1000 nodes)
 2. **Incremental update stays nearly constant** (~160-500µs regardless of size)
-3. **Speedup increases with size** - from 3x at 51 nodes to **25x at 1001 nodes**
+3. **Initial speedup increases with size** in this historical run - from 3x at
+   51 nodes to 25x at 1001 nodes
 
 ### Interpretation for Paper
 
-> "For star topologies, incremental computation achieves O(1) update complexity. At 1000 nodes, patching a single vulnerability requires only 160µs compared to 4.1ms for full recomputation - a 25x speedup."
+> "For star topologies, patching one leaf is a localized update. Regenerate the
+> current benchmark CSV and report the recompute speedup, computed as full
+> recomputation after the same update divided by incremental update time."
 
 ---
 
@@ -106,10 +113,13 @@ The star topology has **O(1) iteration depth** - the attack graph converges in a
 
 The chain topology has **O(N) iteration depth** - information must propagate through N nodes. When we patch node_1, all nodes from node_1 to node_N-1 lose their attack paths.
 
-### Results
+### Illustrative Results
 
-| Nodes | Initial (ms) | Incremental (µs) | Speedup |
-|------:|-------------:|-----------------:|--------:|
+The speedup column below is the historical initial-computation comparison, not
+the recomputation-after-update comparison.
+
+| Nodes | Initial (ms) | Incremental (µs) | Initial speedup |
+|------:|-------------:|-----------------:|----------------:|
 | 10    | 0.87         | 833.04           | 1.0x    |
 | 50    | 3.61         | 2506.62          | 1.4x    |
 | 100   | 6.26         | 5196.67          | 1.2x    |
@@ -123,7 +133,10 @@ The chain topology has **O(N) iteration depth** - information must propagate thr
 
 ### Interpretation for Paper
 
-> "Chain topologies represent the worst case where a single change can invalidate O(N) derived facts. Even here, incremental computation performs comparably to full recomputation, never worse."
+> "Chain topologies represent a worst-case pattern where a single change can
+> invalidate O(N) derived facts. In these cases, incremental maintenance can
+> approach the cost of recomputation; current recompute speedups should be
+> regenerated before reporting."
 
 ---
 
@@ -140,10 +153,13 @@ To show that speedup depends on **where** the change occurs:
 5. Restore the vulnerability
 6. Repeat 100 times and compute statistics
 
-### Results
+### Illustrative Results
 
-| Nodes | Iterations | Initial (ms) | Avg Incr (µs) | Min (µs) | Max (µs) | Speedup |
-|------:|-----------:|-------------:|--------------:|---------:|---------:|--------:|
+The speedup column below is the historical initial-computation comparison. The
+CSV export reports recomputation-after-update timing for current runs.
+
+| Nodes | Iterations | Initial (ms) | Avg Incr (µs) | Min (µs) | Max (µs) | Initial speedup |
+|------:|-----------:|-------------:|--------------:|---------:|---------:|----------------:|
 | 50    | 100        | 2.13         | 905.21        | 46.38    | 1877.00  | 2.3x    |
 | 100   | 100        | 3.52         | 1706.50       | 110.21   | 3798.92  | 2.1x    |
 | 200   | 100        | 6.83         | 3468.08       | 181.67   | 7062.46  | 2.0x    |
@@ -153,12 +169,15 @@ To show that speedup depends on **where** the change occurs:
 
 1. **Minimum time (~50-180µs)**: When cutting near the **end** (node N-1), only a few downstream nodes need recomputation
 2. **Maximum time (~1.8-19ms)**: When cutting near the **start** (node 0), almost all nodes (1..N) lose their attack paths
-3. **Average speedup ~2x**: On average, cutting at random position k invalidates (N-k) nodes, which averages to N/2
+3. **Average affected region is about half the chain**: cutting at random
+   position k invalidates (N-k) nodes, which averages to N/2
 4. **The ratio Max/Min grows with N**: Shows the position-dependent nature of incremental updates
 
 ### Interpretation for Paper
 
-> "The random cut benchmark demonstrates that incremental update complexity is O(affected nodes), not O(total nodes). Cutting a chain at position k invalidates the (N-k) downstream nodes. On average, this yields a 2x speedup over full recomputation."
+> "The random cut benchmark demonstrates that incremental update complexity is
+> tied to the affected downstream region, not just total node count. Recompute
+> speedup should be reported from the full recomputation-after-update columns."
 
 ---
 
@@ -280,6 +299,12 @@ cargo build --release
 cargo run --release --example run_benchmarks
 ```
 
+Regenerate current results before reporting final numbers in the paper:
+
+```bash
+cargo run --release --example run_benchmarks -- --csv results.csv
+```
+
 To also write paper-ready CSV output:
 
 ```bash
@@ -311,10 +336,14 @@ The benchmark code is in:
 
 ## Conclusion
 
-These benchmarks demonstrate that **differential dataflow provides significant speedups for incremental attack graph updates**, especially for:
+These benchmarks demonstrate that Differential Dataflow can provide substantial
+speedups for localized incremental attack graph updates, especially for:
 
-1. **Large networks** with localized changes (25x+ speedup)
+1. **Large networks** with localized changes
 2. **Real-time scenarios** where sub-millisecond updates are critical
 3. **Monitoring systems** that need to react to individual vulnerability patches
 
-The worst-case performance (chain topology, cut at end) matches full recomputation, meaning incremental computation is **never slower** than rebuilding from scratch.
+Worst-case chain-like updates can approach full recomputation cost. Exact
+speedups depend on topology, update position, vulnerability density, and the
+current benchmark implementation, so final claims should be made from regenerated
+CSV output.
