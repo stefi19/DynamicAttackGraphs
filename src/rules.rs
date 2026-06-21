@@ -53,21 +53,72 @@ where
     G: Scope,
     G::Timestamp: differential_dataflow::lattice::Lattice + Ord,
 {
-    // =========================================================================
-    // STRATUM 0: Base facts (firewall rules)
-    // STRATUM 1: Effective access (uses negation over firewall rules)
-    // STRATUM 2: Code execution (recursive, uses effective access)
-    // STRATUM 3: Ownership and goals (derived from code execution)
-    // =========================================================================
+    build_attack_graph_internal(
+        vulnerability_collection,
+        None,
+        network_access_collection,
+        firewall_rules_collection,
+        attacker_positions_collection,
+        attacker_goals_collection,
+    )
+}
 
-    // STRATUM 1: Compute effective network access using antijoin
-    // This implements: effectiveAccess(S,D,Svc) :- network(S,D,Svc), NOT deny(S,D,Svc)
-    //
-    // The antijoin operator removes from the left collection any tuple whose
-    // key appears in the right collection. This is stratified negation because
-    // firewall rules are base facts and don't depend on derived facts.
+/// Builds an attack graph with both remote service vulnerabilities and
+/// local privilege escalation vulnerabilities.
+pub fn build_attack_graph_with_local_vulnerabilities<G>(
+    vulnerability_collection: &Collection<G, VulnerabilityRecord>,
+    local_vulnerability_collection: &Collection<G, LocalVulnerabilityRecord>,
+    network_access_collection: &Collection<G, NetworkAccessRule>,
+    firewall_rules_collection: &Collection<G, FirewallRuleRecord>,
+    attacker_positions_collection: &Collection<G, AttackerStartingPosition>,
+    attacker_goals_collection: &Collection<G, AttackerTargetGoal>,
+) -> (
+    Collection<G, AttackerCodeExecution>,
+    Collection<G, AttackerOwnsMachine>,
+    Collection<G, AttackerGoalReached>,
+)
+where
+    G: Scope,
+    G::Timestamp: differential_dataflow::lattice::Lattice + Ord,
+{
+    build_attack_graph_internal(
+        vulnerability_collection,
+        Some(local_vulnerability_collection),
+        network_access_collection,
+        firewall_rules_collection,
+        attacker_positions_collection,
+        attacker_goals_collection,
+    )
+}
 
+fn build_attack_graph_internal<G>(
+    vulnerability_collection: &Collection<G, VulnerabilityRecord>,
+    local_vulnerability_collection: Option<&Collection<G, LocalVulnerabilityRecord>>,
+    network_access_collection: &Collection<G, NetworkAccessRule>,
+    firewall_rules_collection: &Collection<G, FirewallRuleRecord>,
+    attacker_positions_collection: &Collection<G, AttackerStartingPosition>,
+    attacker_goals_collection: &Collection<G, AttackerTargetGoal>,
+) -> (
+    Collection<G, AttackerCodeExecution>,
+    Collection<G, AttackerOwnsMachine>,
+    Collection<G, AttackerGoalReached>,
+)
+where
+    G: Scope,
+    G::Timestamp: differential_dataflow::lattice::Lattice + Ord,
+{
+    // =========================================================================
+    // STRATUM 1: Effective network access (network edges minus denies)
+    // =========================================================================
+    // We implement: effectiveAccess(S,D,Svc) :- network(S,D,Svc), NOT deny(S,D,Svc).
+    // Implementation steps:
+    //  1. Key the network edges by (src,dst,svc) so joins/antijoins are keyed.
+    //  2. Extract the set of deny keys from firewall rules (filter by Deny).
+    //  3. Antijoin the network set with the deny set to remove blocked edges.
+
+    // 1) key network rules by (src, dst, service)
     let network_access_keyed_by_route = network_access_collection.map(|rule| {
+        // Create an explicit route key tuple for joining/antijoins.
         let route_key = (
             rule.source_host.clone(),
             rule.destination_host.clone(),
@@ -119,24 +170,50 @@ where
         )
     });
 
-    // Fixed-point iteration for transitive attack propagation
-    // CYCLE SAFETY: distinct() ensures each fact appears once. When a cycle
-    // tries to re-derive a fact, the +1 diff is cancelled by the existing -1
-    // from the previous iteration, producing net diff = 0, which stops propagation.
+    // Index local privilege escalation vulnerabilities by host. These
+    // do not require network movement; they upgrade an existing
+    // non-root execCode fact on the same host.
+    let local_vulnerabilities_indexed_by_host = local_vulnerability_collection.map(|collection| {
+        collection.map(|vuln| {
+            (
+                vuln.host_name.clone(),
+                vuln.privilege_gained_on_exploit.clone(),
+            )
+        })
+    });
+
+    // Now run the fixed-point iteration.  `iterate()` provides the
+    // inner collection `current_executions`, representing the set of
+    // execCode facts discovered so far.  Each iteration expands the
+    // frontier by one hop through effective network access and
+    // exploits.
     let all_code_executions = initial_code_execution.iterate(|current_executions| {
+        // `enter()` moves a collection from the outer scope into the
+        // inner iterative scope. This is necessary because
+        // `access_indexed_by_source` and `vulnerabilities_indexed_by_host_service`
+        // are created outside the iterate scope.
         let access_in_scope = access_indexed_by_source.enter(&current_executions.scope());
         let vulns_in_scope =
             vulnerabilities_indexed_by_host_service.enter(&current_executions.scope());
+        let local_vulns_in_scope = local_vulnerabilities_indexed_by_host
+            .as_ref()
+            .map(|collection| collection.enter(&current_executions.scope()));
 
-        // For each compromised host, find reachable destinations
+        // Step A: For every execCode(attacker, src, _), find reachable
+        // destinations (dst, service) using the indexed access table.
+        // The result shape is ((dst, service), attacker)
         let reachable_destinations = current_executions
             .map(|exec| (exec.compromised_host.clone(), exec.attacker_id.clone()))
+            // join on source host -> yields (src, ((attacker),(dst,service)))
             .join(&access_in_scope)
             .map(|(_source, (attacker_id, (destination, service)))| {
+                // Re-key by (destination, service) so we can check for a vuln
                 ((destination, service), attacker_id)
             });
 
-        // Join with vulnerabilities to find exploitable targets
+        // Step B: For each reachable (dst, service) check if dst has a
+        // vulnerability on that service and produce a new execCode fact
+        // with the privilege obtained from the vulnerability.
         let newly_compromised_hosts = reachable_destinations.join(&vulns_in_scope).map(
             |((host, _service), (attacker_id, privilege))| AttackerCodeExecution {
                 attacker_id,
@@ -145,14 +222,39 @@ where
             },
         );
 
-        // Combine and deduplicate - THIS IS CRITICAL FOR CYCLE TERMINATION
-        // The distinct() ensures fixed-point convergence
+        let locally_escalated_executions = match local_vulns_in_scope {
+            Some(local_vulns) => current_executions
+                .filter(|exec| exec.obtained_privilege != PrivilegeLevel::Root)
+                .map(|exec| (exec.compromised_host.clone(), exec.attacker_id.clone()))
+                .join(&local_vulns)
+                .map(|(host, (attacker_id, privilege))| AttackerCodeExecution {
+                    attacker_id,
+                    compromised_host: host,
+                    obtained_privilege: privilege,
+                }),
+            None => current_executions.filter(|_| false),
+        };
+
+        // Step C: combine newly discovered compromises with the
+        // previously discovered set and deduplicate with `distinct()`.
+        // The `distinct()` call is crucial: it ensures that once a
+        // fact has been produced, it does not reappear in subsequent
+        // iterations. This guarantees that the fixed point computation
+        // will terminate even in presence of cycles.
         newly_compromised_hosts
+            .concat(&locally_escalated_executions)
             .concat(current_executions)
             .distinct()
     });
 
-    // STRATUM 3: Derive ownership (root privilege implies ownership)
+    // =========================================================================
+    // STRATUM 3: Ownership and goal checking
+    // =========================================================================
+    // A machine is considered "owned" by an attacker if the attacker
+    // achieves Root privilege on it.  Goals are checked by semijoining
+    // the goal list with the owned machines.
+
+    // Machines where an attacker obtained Root privilege
     let machines_owned_by_attackers = all_code_executions
         .filter(|exec| exec.obtained_privilege == PrivilegeLevel::Root)
         .map(|exec| AttackerOwnsMachine {

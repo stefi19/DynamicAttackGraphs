@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::schema::{
     AttackerCodeExecution, AttackerGoalReached, AttackerOwnsMachine, AttackerStartingPosition,
     AttackerTargetGoal, EffectiveNetworkAccess, FirewallRuleAction, FirewallRuleRecord,
-    NetworkAccessRule, PrivilegeLevel, VulnerabilityRecord,
+    LocalVulnerabilityRecord, NetworkAccessRule, PrivilegeLevel, VulnerabilityRecord,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +21,26 @@ pub struct NaiveAttackGraph {
 /// correctness oracle, not as a performance baseline.
 pub fn evaluate_attack_graph_naive(
     vulnerabilities: Vec<VulnerabilityRecord>,
+    network_access: Vec<NetworkAccessRule>,
+    firewall_rules: Vec<FirewallRuleRecord>,
+    attacker_positions: Vec<AttackerStartingPosition>,
+    attacker_goals: Vec<AttackerTargetGoal>,
+) -> NaiveAttackGraph {
+    evaluate_attack_graph_naive_with_local_vulnerabilities(
+        vulnerabilities,
+        Vec::new(),
+        network_access,
+        firewall_rules,
+        attacker_positions,
+        attacker_goals,
+    )
+}
+
+/// Computes the attack graph from scratch, including local privilege
+/// escalation vulnerabilities in the recursive execCode fixpoint.
+pub fn evaluate_attack_graph_naive_with_local_vulnerabilities(
+    vulnerabilities: Vec<VulnerabilityRecord>,
+    local_vulnerabilities: Vec<LocalVulnerabilityRecord>,
     network_access: Vec<NetworkAccessRule>,
     firewall_rules: Vec<FirewallRuleRecord>,
     attacker_positions: Vec<AttackerStartingPosition>,
@@ -68,6 +88,21 @@ pub fn evaluate_attack_graph_naive(
         let known_executions: Vec<_> = code_executions.iter().cloned().collect();
 
         for execution in &known_executions {
+            if execution.obtained_privilege != PrivilegeLevel::Root {
+                for vulnerability in local_vulnerabilities
+                    .iter()
+                    .filter(|vulnerability| vulnerability.host_name == execution.compromised_host)
+                {
+                    let derived = AttackerCodeExecution {
+                        attacker_id: execution.attacker_id.clone(),
+                        compromised_host: execution.compromised_host.clone(),
+                        obtained_privilege: vulnerability.privilege_gained_on_exploit.clone(),
+                    };
+
+                    changed |= code_executions.insert(derived);
+                }
+            }
+
             for access in effective_network_access
                 .iter()
                 .filter(|access| access.source_host == execution.compromised_host)
