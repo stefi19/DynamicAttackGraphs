@@ -104,7 +104,7 @@ Attack graphs are fundamental tools for security analysis, modeling how an attac
 
 This paper presents a Differential Dataflow-based approach for incremental maintenance of MulVAL-style attack graph rules. The prototype translates a subset of Datalog-style security rules into differential dataflow operators, including recursive lateral movement, firewall negation, local privilege escalation, and goal reachability. It is not intended as a full MulVAL replacement: the current implementation focuses on a research subset of rules and on the maintenance problem rather than complete vulnerability semantics.
 
-The evaluation compares incremental updates against full recomputation after applying the same update. For star topologies with localized changes, the approach achieves speedups of up to \textbf{25$\times$}. Chain and random-cut experiments show the central performance property: localized updates are faster when work is proportional to the affected region rather than the total network. The results support Differential Dataflow as a practical substrate for research on dynamic attack graph maintenance, while also exposing cases where deep or global changes approach recomputation cost.
+The evaluation compares incremental updates against full recomputation after applying the same update. For star topologies with localized changes, incremental updates are substantially faster than recomputation; chain and random-cut experiments show the central performance property: localized updates are faster when work is proportional to the affected region rather than the total network. The results support Differential Dataflow as a practical substrate for research on dynamic attack graph maintenance, while also exposing cases where deep or global changes approach recomputation cost.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -123,11 +123,11 @@ Modern enterprise networks are complex ecosystems with thousands of interconnect
 Consider a typical enterprise network with the following characteristics:
 \begin{itemize}
     \item \textbf{Scale}: Hundreds to thousands of hosts
-    \item \textbf{Dynamics}: Vulnerabilities discovered daily (CVE database averages 50+ new entries per day~\cite{cvedetails})
+    \item \textbf{Dynamics}: Vulnerabilities are discovered, reclassified, and patched continuously, so attack graph inputs change over time
     \item \textbf{Urgency}: Security teams need to assess patch priorities in real-time
 \end{itemize}
 
-Traditional attack graph tools like MulVAL~\cite{ou2006mulval} and NetSPA~\cite{ingols2006practical} regenerate the entire graph whenever the network state changes. For a network with $N$ hosts and $E$ network connections, this requires $O(E \times D)$ work, where $D$ is the diameter of the attack graph. When a single vulnerability is patched, the entire computation must be repeated---even if 99\% of the graph remains unchanged.
+Traditional attack graph workflows using tools such as MulVAL~\cite{ou2006mulval} and NetSPA~\cite{ingols2006practical} are commonly run as batch analyses after the network state changes. For a network with $N$ hosts and $E$ network connections, this can require recomputing the relevant derived graph, with work shaped by $E$ and the attack propagation depth $D$. When a single vulnerability is patched, a batch workflow may repeat substantial computation even if most of the graph remains unchanged.
 
 \subsection{Contribution}
 
@@ -174,12 +174,17 @@ This rule states: if an attacker can execute code on \texttt{SrcHost}, and netwo
 
 \subsection{The Recomputation Problem}
 
-MulVAL uses XSB Prolog to evaluate these rules. When any input fact changes (e.g., a vulnerability is patched), the entire Prolog query must be re-executed. This is because:
+MulVAL uses XSB Prolog, including tabling, to evaluate these rules. In the
+standard batch workflow considered here, after an input fact changes (e.g., a
+vulnerability is patched), the analysis is re-run rather than maintained through
+Differential Dataflow-style dynamic updates. This matters because:
 
 \begin{enumerate}
-    \item Prolog evaluates rules top-down with backtracking
-    \item There is no mechanism to identify which derived facts depend on the changed input
-    \item The transitive closure (reachability) must be recomputed from scratch
+    \item the evaluated workflow does not maintain a live differential dataflow
+    state across base-fact updates;
+    \item changed inputs can affect recursive reachability facts; and
+    \item without an incremental maintenance layer, the post-update result is
+    obtained by re-running the analysis over the updated facts.
 \end{enumerate}
 
 \subsection{Differential Dataflow}
@@ -397,7 +402,7 @@ deny rules as stratified negation.
 \label{tab:star}
 \begin{tabular}{@{}rrrr@{}}
 \toprule
-\textbf{Nodes} & \textbf{Initial (ms)} & \textbf{Incremental ($\mu$s)} & \textbf{Speedup} \\
+\textbf{Nodes} & \textbf{Initial (ms)} & \textbf{Incremental ($\mu$s)} & \textbf{Initial Speedup} \\
 \midrule
 51    & 1.58 & 501  & 3.2$\times$ \\
 101   & 1.96 & 413  & 4.7$\times$ \\
@@ -408,7 +413,12 @@ deny rules as stratified negation.
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:star} presents the results for the star topology. Initial computation time ranges from 1.58 ms (51 nodes) to 4.11 ms (1001 nodes). Incremental update times range from 501 $\mu$s to 161 $\mu$s.
+Table~\ref{tab:star} presents historical star-topology timings retained for
+context. The speedup column compares initial computation time with incremental
+update time; paper-quality update claims should use the recomputation-after-update
+baseline, where a fresh dataflow is rebuilt from the updated facts. Initial
+computation time ranges from 1.58 ms (51 nodes) to 4.11 ms (1001 nodes).
+Incremental update times range from 501 $\mu$s to 161 $\mu$s.
 
 \subsection{RQ3: Scalability}
 
@@ -547,14 +557,16 @@ minimal attack paths.
 The experimental results demonstrate distinct performance characteristics for initial computation versus incremental updates.
 
 \subsubsection{Scalability}
-As shown in the star topology benchmarks, the initial computation time scales linearly with the network size ($O(N)$). In contrast, incremental update times remain nearly constant ($O(1)$) for localized changes. This divergence leads to increasing speedups as the network grows, reaching over 25$\times$ for 1000 nodes. This confirms that for localized changes, the computational cost is decoupled from the total network size.
+As shown in the star topology benchmarks, the initial computation time scales linearly with the network size ($O(N)$). In contrast, incremental update times remain nearly constant ($O(1)$) for localized changes. This divergence supports the main performance claim: for localized changes, the incremental cost is largely decoupled from the total network size. Exact recomputation speedups should be regenerated from the benchmark runner before reporting final numeric results.
 
 \subsubsection{Update Complexity}
 The random cut experiments on chain topologies reveal that update time is proportional to the number of affected nodes, rather than the total number of nodes.
 \begin{itemize}
     \item \textbf{Best Case}: Changes near the end of the attack chain affect few downstream nodes, resulting in microsecond-scale updates.
     \item \textbf{Worst Case}: Changes near the start of the chain invalidate all downstream paths, approaching the cost of full recomputation.
-    \item \textbf{Average Case}: Random changes typically affect half the network, yielding a $2\times$ speedup over full recomputation.
+    \item \textbf{Average Case}: Random changes typically affect about half the
+    chain; the observed speedup depends on the recomputation-after-update
+    baseline for the current run.
 \end{itemize}
 
 Table~\ref{tab:complexity} summarizes the theoretical complexity.
@@ -596,7 +608,7 @@ universal guarantee for every Differential Dataflow execution.
 The implementation utilizes Rust and the \texttt{timely} dataflow framework. Key engineering decisions include:
 
 \begin{itemize}
-    \item \textbf{Single-threaded execution}: \texttt{execute\_directly} was used for benchmarking consistency, though production deployments can scale across cores.
+    \item \textbf{Single-threaded execution}: \texttt{execute\_directly} was used for benchmarking consistency. Multi-worker or distributed execution is future work for this prototype.
     \item \textbf{String-based identifiers}: Host names are strings for clarity. Production systems could use integer IDs for improved performance.
     \item \textbf{Memory overhead}: Differential dataflow maintains internal state proportional to the collection size. For very large networks, this memory footprint is a consideration.
 \end{itemize}
@@ -661,7 +673,8 @@ This paper presented an incremental approach to attack graph maintenance using d
 The evaluation demonstrates:
 
 \begin{enumerate}
-    \item \textbf{Significant speedups}: Up to 25$\times$ for localized changes in star topologies.
+    \item \textbf{Localized speedups}: Incremental updates are substantially
+    faster than recomputation when the affected region is small.
     \item \textbf{Proportional updates}: Update time scales with affected nodes, not total network size.
     \item \textbf{Worst-case behavior}: Deep chain-like updates approach the cost of full recomputation.
 \end{enumerate}
