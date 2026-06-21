@@ -4,9 +4,7 @@
 use std::time::Instant;
 
 use differential_dataflow::input::Input;
-use differential_dataflow::operators::Consolidate;
 use timely::dataflow::operators::probe::Handle;
-use timely::dataflow::operators::Probe;
 
 mod rules;
 mod schema;
@@ -42,20 +40,26 @@ fn main() {
             output_probe,
         ) = worker.dataflow::<usize, _, _>(|scope| {
             // Create input collections for each fact type
-            let (vuln_handle, vulnerability_collection) = scope.new_collection::<VulnerabilityRecord, isize>();
-            let (network_handle, network_access_collection) = scope.new_collection::<NetworkAccessRule, isize>();
-            let (firewall_handle, firewall_rules_collection) = scope.new_collection::<FirewallRuleRecord, isize>();
-            let (position_handle, attacker_positions_collection) = scope.new_collection::<AttackerStartingPosition, isize>();
-            let (goal_handle, attacker_goals_collection) = scope.new_collection::<AttackerTargetGoal, isize>();
+            let (vuln_handle, vulnerability_collection) =
+                scope.new_collection::<VulnerabilityRecord, isize>();
+            let (network_handle, network_access_collection) =
+                scope.new_collection::<NetworkAccessRule, isize>();
+            let (firewall_handle, firewall_rules_collection) =
+                scope.new_collection::<FirewallRuleRecord, isize>();
+            let (position_handle, attacker_positions_collection) =
+                scope.new_collection::<AttackerStartingPosition, isize>();
+            let (goal_handle, attacker_goals_collection) =
+                scope.new_collection::<AttackerTargetGoal, isize>();
 
             // Build the attack graph using our rules
-            let (code_execution_results, machine_ownership_results, goal_reached_results) = build_attack_graph(
-                &vulnerability_collection,
-                &network_access_collection,
-                &firewall_rules_collection,
-                &attacker_positions_collection,
-                &attacker_goals_collection,
-            );
+            let (code_execution_results, machine_ownership_results, goal_reached_results) =
+                build_attack_graph(
+                    &vulnerability_collection,
+                    &network_access_collection,
+                    &firewall_rules_collection,
+                    &attacker_positions_collection,
+                    &attacker_goals_collection,
+                );
 
             // Print changes to code execution facts
             code_execution_results
@@ -85,7 +89,10 @@ fn main() {
                     if is_main_worker {
                         let (data, timestamp, difference) = change;
                         let change_type = if *difference > 0 { "+" } else { "-" };
-                        println!("  [t={}] {} {} (TARGET COMPROMISED)", timestamp, change_type, data);
+                        println!(
+                            "  [t={}] {} {} (TARGET COMPROMISED)",
+                            timestamp, change_type, data
+                        );
                     }
                 })
                 .probe_with(&mut computation_probe);
@@ -141,14 +148,14 @@ fn main() {
         ];
 
         // Attacker starts on the internet
-        let attacker_starting_positions = vec![
-            AttackerStartingPosition::new("eve", "internet", PrivilegeLevel::User),
-        ];
+        let attacker_starting_positions = vec![AttackerStartingPosition::new(
+            "eve",
+            "internet",
+            PrivilegeLevel::User,
+        )];
 
         // Attacker wants to compromise admin01
-        let attacker_objectives = vec![
-            AttackerTargetGoal::new("eve", "admin01"),
-        ];
+        let attacker_objectives = vec![AttackerTargetGoal::new("eve", "admin01")];
 
         // Insert all initial facts
         let computation_start_time = Instant::now();
@@ -185,7 +192,10 @@ fn main() {
 
         if is_main_worker {
             println!();
-            println!("  Initial computation completed in {:?}", computation_start_time.elapsed());
+            println!(
+                "  Initial computation completed in {:?}",
+                computation_start_time.elapsed()
+            );
             println!();
         }
 
@@ -203,7 +213,9 @@ fn main() {
         let update_start_time = Instant::now();
 
         // Add firewall rule that blocks HTTP access
-        firewall_rules_input.insert(FirewallRuleRecord::create_deny_rule("internet", "web01", "http"));
+        firewall_rules_input.insert(FirewallRuleRecord::create_deny_rule(
+            "internet", "web01", "http",
+        ));
 
         // Advance to next timestamp
         vulnerability_input.advance_to(2);
@@ -223,7 +235,10 @@ fn main() {
 
         if is_main_worker {
             println!();
-            println!("  Incremental update completed in {:?}", update_start_time.elapsed());
+            println!(
+                "  Incremental update completed in {:?}",
+                update_start_time.elapsed()
+            );
             println!("  Note: HTTP path removed, but HTTPS path still exists");
             println!();
         }
@@ -242,8 +257,18 @@ fn main() {
         let update_start_time = Instant::now();
 
         // Remove both HTTP and HTTPS vulnerabilities
-        vulnerability_input.remove(VulnerabilityRecord::new("web01", "CVE-2024-1234", "http", PrivilegeLevel::User));
-        vulnerability_input.remove(VulnerabilityRecord::new("web01", "CVE-2024-1234", "https", PrivilegeLevel::User));
+        vulnerability_input.remove(VulnerabilityRecord::new(
+            "web01",
+            "CVE-2024-1234",
+            "http",
+            PrivilegeLevel::User,
+        ));
+        vulnerability_input.remove(VulnerabilityRecord::new(
+            "web01",
+            "CVE-2024-1234",
+            "https",
+            PrivilegeLevel::User,
+        ));
 
         // Advance to next timestamp
         vulnerability_input.advance_to(3);
@@ -263,7 +288,10 @@ fn main() {
 
         if is_main_worker {
             println!();
-            println!("  Incremental update completed in {:?}", update_start_time.elapsed());
+            println!(
+                "  Incremental update completed in {:?}",
+                update_start_time.elapsed()
+            );
             println!("  Target is now protected - all attack paths removed");
             println!();
         }
@@ -282,7 +310,12 @@ fn main() {
         let update_start_time = Instant::now();
 
         // Add new vulnerability
-        vulnerability_input.insert(VulnerabilityRecord::new("web01", "CVE-2024-0DAY", "https", PrivilegeLevel::User));
+        vulnerability_input.insert(VulnerabilityRecord::new(
+            "web01",
+            "CVE-2024-0DAY",
+            "https",
+            PrivilegeLevel::User,
+        ));
 
         // Advance to next timestamp
         vulnerability_input.advance_to(4);
@@ -302,7 +335,10 @@ fn main() {
 
         if is_main_worker {
             println!();
-            println!("  Incremental update completed in {:?}", update_start_time.elapsed());
+            println!(
+                "  Incremental update completed in {:?}",
+                update_start_time.elapsed()
+            );
             println!("  Warning: Attack paths restored via new vulnerability");
             println!();
         }

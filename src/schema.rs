@@ -2,6 +2,7 @@
 // Defines all the structures needed to represent network security facts
 
 use abomonation_derive::Abomonation;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 // Type aliases for better readability
@@ -11,7 +12,9 @@ pub type VulnerabilityIdentifier = String;
 pub type AttackerIdentifier = String;
 
 // Privilege levels that can be obtained on a system
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub enum PrivilegeLevel {
     None,
     User,
@@ -29,7 +32,9 @@ impl fmt::Display for PrivilegeLevel {
 }
 
 // What a firewall rule does
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub enum FirewallRuleAction {
     Allow,
     Deny,
@@ -41,7 +46,9 @@ pub enum FirewallRuleAction {
 
 // A vulnerability that exists on a specific host
 // Similar to MulVAL's vulExists predicate
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub struct VulnerabilityRecord {
     pub host_name: HostIdentifier,
     pub vulnerability_id: VulnerabilityIdentifier,
@@ -50,7 +57,12 @@ pub struct VulnerabilityRecord {
 }
 
 impl VulnerabilityRecord {
-    pub fn new(host_name: &str, vulnerability_id: &str, affected_service: &str, privilege_gained: PrivilegeLevel) -> Self {
+    pub fn new(
+        host_name: &str,
+        vulnerability_id: &str,
+        affected_service: &str,
+        privilege_gained: PrivilegeLevel,
+    ) -> Self {
         Self {
             host_name: host_name.to_string(),
             vulnerability_id: vulnerability_id.to_string(),
@@ -62,7 +74,9 @@ impl VulnerabilityRecord {
 
 // Network connection between two hosts
 // Similar to MulVAL's hacl predicate
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub struct NetworkAccessRule {
     pub source_host: HostIdentifier,
     pub destination_host: HostIdentifier,
@@ -80,7 +94,9 @@ impl NetworkAccessRule {
 }
 
 // A firewall rule that blocks or allows traffic
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub struct FirewallRuleRecord {
     pub source_zone: HostIdentifier,
     pub destination_host: HostIdentifier,
@@ -100,7 +116,9 @@ impl FirewallRuleRecord {
 }
 
 // Where the attacker starts from
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub struct AttackerStartingPosition {
     pub attacker_id: AttackerIdentifier,
     pub starting_host: HostIdentifier,
@@ -118,7 +136,9 @@ impl AttackerStartingPosition {
 }
 
 // What the attacker wants to compromise
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub struct AttackerTargetGoal {
     pub attacker_id: AttackerIdentifier,
     pub target_host_name: HostIdentifier,
@@ -138,7 +158,9 @@ impl AttackerTargetGoal {
 // ----------------------------------
 
 // Network access after applying firewall rules
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub struct EffectiveNetworkAccess {
     pub source_host: HostIdentifier,
     pub destination_host: HostIdentifier,
@@ -147,7 +169,9 @@ pub struct EffectiveNetworkAccess {
 
 // Attacker can execute code on a host
 // Similar to MulVAL's execCode predicate
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub struct AttackerCodeExecution {
     pub attacker_id: AttackerIdentifier,
     pub compromised_host: HostIdentifier,
@@ -156,12 +180,18 @@ pub struct AttackerCodeExecution {
 
 impl fmt::Display for AttackerCodeExecution {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "execCode({}, {}, {})", self.attacker_id, self.compromised_host, self.obtained_privilege)
+        write!(
+            formatter,
+            "execCode({}, {}, {})",
+            self.attacker_id, self.compromised_host, self.obtained_privilege
+        )
     }
 }
 
 // Attacker has full control of a machine (root access)
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub struct AttackerOwnsMachine {
     pub attacker_id: AttackerIdentifier,
     pub owned_host: HostIdentifier,
@@ -169,12 +199,18 @@ pub struct AttackerOwnsMachine {
 
 impl fmt::Display for AttackerOwnsMachine {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "ownsMachine({}, {})", self.attacker_id, self.owned_host)
+        write!(
+            formatter,
+            "ownsMachine({}, {})",
+            self.attacker_id, self.owned_host
+        )
     }
 }
 
 // Attacker has reached their target
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
 pub struct AttackerGoalReached {
     pub attacker_id: AttackerIdentifier,
     pub reached_target: HostIdentifier,
@@ -182,7 +218,11 @@ pub struct AttackerGoalReached {
 
 impl fmt::Display for AttackerGoalReached {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "goalReached({}, {})", self.attacker_id, self.reached_target)
+        write!(
+            formatter,
+            "goalReached({}, {})",
+            self.attacker_id, self.reached_target
+        )
     }
 }
 

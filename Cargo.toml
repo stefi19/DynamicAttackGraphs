@@ -9,10 +9,10 @@ license = "MIT"
 
 [dependencies]
 # Differential Dataflow - core library for incremental computation
-differential-dataflow = "0.12"
+differential-dataflow = "=0.13.0"
 
 # Timely Dataflow - the underlying parallel dataflow engine
-timely = "0.12"
+timely = "=0.13.0"
 
 # Abomonation - fast serialization (required by timely)
 abomonation = "0.7"
@@ -21,6 +21,7 @@ abomonation_derive = "0.5"
 # For logging and pretty output
 env_logger = "0.10"
 log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
 
 # For configuration
 clap = { version = "4.4", features = ["derive"] }

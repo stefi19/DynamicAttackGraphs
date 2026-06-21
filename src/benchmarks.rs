@@ -4,7 +4,6 @@
 use std::time::{Duration, Instant};
 
 use differential_dataflow::input::Input;
-use differential_dataflow::operators::Consolidate;
 use timely::dataflow::operators::probe::Handle;
 
 use crate::rules::build_attack_graph;
@@ -28,8 +27,14 @@ impl BenchmarkResults {
         println!("Initial computation: {:?}", self.initial_computation_time);
         println!("Incremental update:  {:?}", self.incremental_update_time);
         println!("Speedup factor: {:.2}x", self.speedup_factor);
-        println!("Attack paths (initial): {}", self.number_of_attack_paths_initial);
-        println!("Attack paths (after patch): {}", self.number_of_attack_paths_after_patch);
+        println!(
+            "Attack paths (initial): {}",
+            self.number_of_attack_paths_initial
+        );
+        println!(
+            "Attack paths (after patch): {}",
+            self.number_of_attack_paths_after_patch
+        );
         println!();
     }
 }
@@ -50,7 +55,7 @@ pub fn generate_chain_network(
     // Create chain: node_0 -> node_1 -> node_2 -> ... -> node_(n-1)
     for node_index in 0..number_of_nodes {
         let node_name = format!("node_{}", node_index);
-        
+
         // Each node has a vulnerability on ssh service
         vulnerabilities.push(VulnerabilityRecord::new(
             &node_name,
@@ -58,7 +63,7 @@ pub fn generate_chain_network(
             "ssh",
             PrivilegeLevel::Root,
         ));
-        
+
         // Add edge to next node (except for last node)
         if node_index < number_of_nodes - 1 {
             let next_node_name = format!("node_{}", node_index + 1);
@@ -67,16 +72,24 @@ pub fn generate_chain_network(
     }
 
     // Attacker starts at node_0
-    let attacker_positions = vec![
-        AttackerStartingPosition::new("attacker", "node_0", PrivilegeLevel::Root),
-    ];
+    let attacker_positions = vec![AttackerStartingPosition::new(
+        "attacker",
+        "node_0",
+        PrivilegeLevel::Root,
+    )];
 
     // Goal is to reach last node
-    let attacker_goals = vec![
-        AttackerTargetGoal::new("attacker", &format!("node_{}", number_of_nodes - 1)),
-    ];
+    let attacker_goals = vec![AttackerTargetGoal::new(
+        "attacker",
+        &format!("node_{}", number_of_nodes - 1),
+    )];
 
-    (network_topology, vulnerabilities, attacker_positions, attacker_goals)
+    (
+        network_topology,
+        vulnerabilities,
+        attacker_positions,
+        attacker_goals,
+    )
 }
 
 // Generate a mesh network where nodes form a grid
@@ -100,7 +113,7 @@ pub fn generate_mesh_network(
     for y in 0..grid_height {
         for x in 0..grid_width {
             let current_node = node_name(x, y);
-            
+
             // Each node has a vulnerability
             vulnerabilities.push(VulnerabilityRecord::new(
                 &current_node,
@@ -108,7 +121,7 @@ pub fn generate_mesh_network(
                 "ssh",
                 PrivilegeLevel::Root,
             ));
-            
+
             // Connect to right neighbor
             if x + 1 < grid_width {
                 network_topology.push(NetworkAccessRule::new(
@@ -117,7 +130,7 @@ pub fn generate_mesh_network(
                     "ssh",
                 ));
             }
-            
+
             // Connect to bottom neighbor
             if y + 1 < grid_height {
                 network_topology.push(NetworkAccessRule::new(
@@ -130,16 +143,24 @@ pub fn generate_mesh_network(
     }
 
     // Attacker starts at top-left
-    let attacker_positions = vec![
-        AttackerStartingPosition::new("attacker", "node_0_0", PrivilegeLevel::Root),
-    ];
+    let attacker_positions = vec![AttackerStartingPosition::new(
+        "attacker",
+        "node_0_0",
+        PrivilegeLevel::Root,
+    )];
 
     // Goal is bottom-right
-    let attacker_goals = vec![
-        AttackerTargetGoal::new("attacker", &node_name(grid_width - 1, grid_height - 1)),
-    ];
+    let attacker_goals = vec![AttackerTargetGoal::new(
+        "attacker",
+        &node_name(grid_width - 1, grid_height - 1),
+    )];
 
-    (network_topology, vulnerabilities, attacker_positions, attacker_goals)
+    (
+        network_topology,
+        vulnerabilities,
+        attacker_positions,
+        attacker_goals,
+    )
 }
 
 // Generate a star network: central hub connected to N leaf nodes
@@ -167,28 +188,36 @@ pub fn generate_star_network(
     // Create leaves and connect them to hub
     for leaf_index in 0..number_of_leaves {
         let leaf_name = format!("leaf_{}", leaf_index);
-        
+
         vulnerabilities.push(VulnerabilityRecord::new(
             &leaf_name,
             &format!("CVE-LEAF-{}", leaf_index),
             "ssh",
             PrivilegeLevel::Root,
         ));
-        
+
         network_topology.push(NetworkAccessRule::new("hub", &leaf_name, "ssh"));
     }
 
     // Attacker starts at hub
-    let attacker_positions = vec![
-        AttackerStartingPosition::new("attacker", "hub", PrivilegeLevel::Root),
-    ];
+    let attacker_positions = vec![AttackerStartingPosition::new(
+        "attacker",
+        "hub",
+        PrivilegeLevel::Root,
+    )];
 
     // Goal is last leaf
-    let attacker_goals = vec![
-        AttackerTargetGoal::new("attacker", &format!("leaf_{}", number_of_leaves - 1)),
-    ];
+    let attacker_goals = vec![AttackerTargetGoal::new(
+        "attacker",
+        &format!("leaf_{}", number_of_leaves - 1),
+    )];
 
-    (network_topology, vulnerabilities, attacker_positions, attacker_goals)
+    (
+        network_topology,
+        vulnerabilities,
+        attacker_positions,
+        attacker_goals,
+    )
 }
 
 // Run the chain benchmark - this is the "money shot" for the paper
@@ -196,7 +225,7 @@ pub fn generate_star_network(
 pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
-    
+
     let (network_topology, vulnerabilities, attacker_positions, attacker_goals) =
         generate_chain_network(number_of_nodes);
 
@@ -216,11 +245,16 @@ pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
             mut attacker_position_input,
             mut attacker_goal_input,
         ) = worker.dataflow::<usize, _, _>(|scope| {
-            let (vuln_handle, vuln_collection) = scope.new_collection::<VulnerabilityRecord, isize>();
-            let (network_handle, network_collection) = scope.new_collection::<NetworkAccessRule, isize>();
-            let (firewall_handle, firewall_collection) = scope.new_collection::<FirewallRuleRecord, isize>();
-            let (position_handle, position_collection) = scope.new_collection::<AttackerStartingPosition, isize>();
-            let (goal_handle, goal_collection) = scope.new_collection::<AttackerTargetGoal, isize>();
+            let (vuln_handle, vuln_collection) =
+                scope.new_collection::<VulnerabilityRecord, isize>();
+            let (network_handle, network_collection) =
+                scope.new_collection::<NetworkAccessRule, isize>();
+            let (firewall_handle, firewall_collection) =
+                scope.new_collection::<FirewallRuleRecord, isize>();
+            let (position_handle, position_collection) =
+                scope.new_collection::<AttackerStartingPosition, isize>();
+            let (goal_handle, goal_collection) =
+                scope.new_collection::<AttackerTargetGoal, isize>();
 
             let (exec_code, _owns_machine, _goals_reached) = build_attack_graph(
                 &vuln_collection,
@@ -232,7 +266,13 @@ pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
 
             exec_code.consolidate().probe_with(&mut probe);
 
-            (vuln_handle, network_handle, firewall_handle, position_handle, goal_handle)
+            (
+                vuln_handle,
+                network_handle,
+                firewall_handle,
+                position_handle,
+                goal_handle,
+            )
         });
 
         // Phase 1: Initial computation
@@ -298,10 +338,10 @@ pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
         initial_clone.store(initial_elapsed.as_nanos() as u64, Ordering::SeqCst);
         incremental_clone.store(incremental_elapsed.as_nanos() as u64, Ordering::SeqCst);
     });
-    
+
     let initial_time = Duration::from_nanos(initial_nanos.load(Ordering::SeqCst));
     let incremental_time = Duration::from_nanos(incremental_nanos.load(Ordering::SeqCst));
-    
+
     let speedup = if incremental_time.as_nanos() > 0 {
         initial_time.as_secs_f64() / incremental_time.as_secs_f64()
     } else {
@@ -320,7 +360,10 @@ pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
 
 // Run multiple benchmarks with increasing sizes
 pub fn run_scalability_benchmark(sizes: &[usize]) -> Vec<BenchmarkResults> {
-    sizes.iter().map(|&size| run_chain_benchmark(size)).collect()
+    sizes
+        .iter()
+        .map(|&size| run_chain_benchmark(size))
+        .collect()
 }
 
 // Extended results for random cut benchmark
@@ -338,11 +381,14 @@ pub struct RandomCutBenchmarkResults {
 // Random Cut Benchmark for Chain topology
 // This shows how speedup depends on cut position
 // Cutting at position k means only k nodes need to be recomputed
-pub fn run_chain_random_cut_benchmark(number_of_nodes: usize, iterations: usize) -> RandomCutBenchmarkResults {
+pub fn run_chain_random_cut_benchmark(
+    number_of_nodes: usize,
+    iterations: usize,
+) -> RandomCutBenchmarkResults {
+    use rand::Rng;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
-    use rand::Rng;
-    
+
     let (network_topology, vulnerabilities, attacker_positions, attacker_goals) =
         generate_chain_network(number_of_nodes);
 
@@ -351,7 +397,7 @@ pub fn run_chain_random_cut_benchmark(number_of_nodes: usize, iterations: usize)
     let incremental_times_nanos = Arc::new(std::sync::Mutex::new(Vec::new()));
     let initial_clone = Arc::clone(&initial_nanos);
     let times_clone = Arc::clone(&incremental_times_nanos);
-    
+
     let iterations_count = iterations;
 
     timely::execute_directly(move |worker| {
@@ -364,11 +410,16 @@ pub fn run_chain_random_cut_benchmark(number_of_nodes: usize, iterations: usize)
             mut attacker_position_input,
             mut attacker_goal_input,
         ) = worker.dataflow::<usize, _, _>(|scope| {
-            let (vuln_handle, vuln_collection) = scope.new_collection::<VulnerabilityRecord, isize>();
-            let (network_handle, network_collection) = scope.new_collection::<NetworkAccessRule, isize>();
-            let (firewall_handle, firewall_collection) = scope.new_collection::<FirewallRuleRecord, isize>();
-            let (position_handle, position_collection) = scope.new_collection::<AttackerStartingPosition, isize>();
-            let (goal_handle, goal_collection) = scope.new_collection::<AttackerTargetGoal, isize>();
+            let (vuln_handle, vuln_collection) =
+                scope.new_collection::<VulnerabilityRecord, isize>();
+            let (network_handle, network_collection) =
+                scope.new_collection::<NetworkAccessRule, isize>();
+            let (firewall_handle, firewall_collection) =
+                scope.new_collection::<FirewallRuleRecord, isize>();
+            let (position_handle, position_collection) =
+                scope.new_collection::<AttackerStartingPosition, isize>();
+            let (goal_handle, goal_collection) =
+                scope.new_collection::<AttackerTargetGoal, isize>();
 
             let (exec_code, _owns_machine, _goals_reached) = build_attack_graph(
                 &vuln_collection,
@@ -380,7 +431,13 @@ pub fn run_chain_random_cut_benchmark(number_of_nodes: usize, iterations: usize)
 
             exec_code.consolidate().probe_with(&mut probe);
 
-            (vuln_handle, network_handle, firewall_handle, position_handle, goal_handle)
+            (
+                vuln_handle,
+                network_handle,
+                firewall_handle,
+                position_handle,
+                goal_handle,
+            )
         });
 
         // Phase 1: Initial computation
@@ -420,18 +477,18 @@ pub fn run_chain_random_cut_benchmark(number_of_nodes: usize, iterations: usize)
         // Phase 2: Multiple random cut tests
         let mut rng = rand::thread_rng();
         let mut times_vec = times_clone.lock().unwrap();
-        
+
         for i in 0..iterations_count {
             let time_step = 2 + (i * 2); // Each iteration uses 2 time steps
-            
+
             // Pick a random node k between 0 and number_of_nodes - 1
             let k = rng.gen_range(0..number_of_nodes);
             let node_name = format!("node_{}", k);
             let cve_name = format!("CVE-CHAIN-{}", k);
-            
+
             // Remove vulnerability at node k (cuts chain at position k)
             let start_incremental = Instant::now();
-            
+
             vulnerability_input.remove(VulnerabilityRecord::new(
                 &node_name,
                 &cve_name,
@@ -456,7 +513,7 @@ pub fn run_chain_random_cut_benchmark(number_of_nodes: usize, iterations: usize)
 
             let incremental_elapsed = start_incremental.elapsed();
             times_vec.push(incremental_elapsed.as_nanos() as u64);
-            
+
             // Re-add the vulnerability to restore the chain for next iteration
             vulnerability_input.insert(VulnerabilityRecord::new(
                 &node_name,
@@ -481,18 +538,18 @@ pub fn run_chain_random_cut_benchmark(number_of_nodes: usize, iterations: usize)
             }
         }
     });
-    
+
     let initial_time = Duration::from_nanos(initial_nanos.load(Ordering::SeqCst));
     let times = incremental_times_nanos.lock().unwrap();
-    
+
     let min_nanos = *times.iter().min().unwrap_or(&0);
     let max_nanos = *times.iter().max().unwrap_or(&0);
-    let avg_nanos = if times.is_empty() { 
-        0 
-    } else { 
-        times.iter().sum::<u64>() / times.len() as u64 
+    let avg_nanos = if times.is_empty() {
+        0
+    } else {
+        times.iter().sum::<u64>() / times.len() as u64
     };
-    
+
     let avg_incremental = Duration::from_nanos(avg_nanos);
     let average_speedup = if avg_nanos > 0 {
         initial_time.as_secs_f64() / avg_incremental.as_secs_f64()
@@ -513,8 +570,12 @@ pub fn run_chain_random_cut_benchmark(number_of_nodes: usize, iterations: usize)
 
 // Print results table for random cut benchmark
 pub fn print_random_cut_benchmark_table(results: &[RandomCutBenchmarkResults]) {
-    println!("| Nodes | Iterations | Initial (ms) | Avg Incr (us) | Min (us) | Max (us) | Avg Speedup |");
-    println!("|-------|------------|--------------|---------------|----------|----------|-------------|");
+    println!(
+        "| Nodes | Iterations | Initial (ms) | Avg Incr (us) | Min (us) | Max (us) | Avg Speedup |"
+    );
+    println!(
+        "|-------|------------|--------------|---------------|----------|----------|-------------|"
+    );
     for result in results {
         println!(
             "| {:>5} | {:>10} | {:>12.2} | {:>13.2} | {:>8.2} | {:>8.2} | {:>11.1}x |",
@@ -533,12 +594,12 @@ pub fn print_random_cut_benchmark_table(results: &[RandomCutBenchmarkResults]) {
 pub fn run_star_benchmark(number_of_leaves: usize) -> BenchmarkResults {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
-    
+
     let (network_topology, vulnerabilities, attacker_positions, attacker_goals) =
         generate_star_network(number_of_leaves);
 
     let total_nodes = number_of_leaves + 1; // leaves + hub
-    
+
     // Use atomics to share timing data (thread-safe)
     let initial_nanos = Arc::new(AtomicU64::new(0));
     let incremental_nanos = Arc::new(AtomicU64::new(0));
@@ -555,11 +616,16 @@ pub fn run_star_benchmark(number_of_leaves: usize) -> BenchmarkResults {
             mut attacker_position_input,
             mut attacker_goal_input,
         ) = worker.dataflow::<usize, _, _>(|scope| {
-            let (vuln_handle, vuln_collection) = scope.new_collection::<VulnerabilityRecord, isize>();
-            let (network_handle, network_collection) = scope.new_collection::<NetworkAccessRule, isize>();
-            let (firewall_handle, firewall_collection) = scope.new_collection::<FirewallRuleRecord, isize>();
-            let (position_handle, position_collection) = scope.new_collection::<AttackerStartingPosition, isize>();
-            let (goal_handle, goal_collection) = scope.new_collection::<AttackerTargetGoal, isize>();
+            let (vuln_handle, vuln_collection) =
+                scope.new_collection::<VulnerabilityRecord, isize>();
+            let (network_handle, network_collection) =
+                scope.new_collection::<NetworkAccessRule, isize>();
+            let (firewall_handle, firewall_collection) =
+                scope.new_collection::<FirewallRuleRecord, isize>();
+            let (position_handle, position_collection) =
+                scope.new_collection::<AttackerStartingPosition, isize>();
+            let (goal_handle, goal_collection) =
+                scope.new_collection::<AttackerTargetGoal, isize>();
 
             let (exec_code, _owns_machine, _goals_reached) = build_attack_graph(
                 &vuln_collection,
@@ -571,7 +637,13 @@ pub fn run_star_benchmark(number_of_leaves: usize) -> BenchmarkResults {
 
             exec_code.consolidate().probe_with(&mut probe);
 
-            (vuln_handle, network_handle, firewall_handle, position_handle, goal_handle)
+            (
+                vuln_handle,
+                network_handle,
+                firewall_handle,
+                position_handle,
+                goal_handle,
+            )
         });
 
         // Phase 1: Initial computation
@@ -636,10 +708,10 @@ pub fn run_star_benchmark(number_of_leaves: usize) -> BenchmarkResults {
         initial_clone.store(initial_elapsed.as_nanos() as u64, Ordering::SeqCst);
         incremental_clone.store(incremental_elapsed.as_nanos() as u64, Ordering::SeqCst);
     });
-    
+
     let initial_time = Duration::from_nanos(initial_nanos.load(Ordering::SeqCst));
     let incremental_time = Duration::from_nanos(incremental_nanos.load(Ordering::SeqCst));
-    
+
     let speedup = if incremental_time.as_nanos() > 0 {
         initial_time.as_secs_f64() / incremental_time.as_secs_f64()
     } else {
