@@ -34,6 +34,8 @@ post-update attack graph from a clean dataflow state. The current benchmark
 demonstrates this for star, chain, and random-cut chain scenarios while keeping
 the original initial and incremental timings in the output.
 
+![Incremental update time compared with full recomputation](docs/assets/incremental_vs_recompute.png)
+
 ## Test Environment
 
 - **Framework**: differential-dataflow v0.13 + timely v0.13
@@ -94,6 +96,8 @@ not be reported as the recomputation-after-update speedup.
 > current benchmark CSV and report the recompute speedup, computed as full
 > recomputation after the same update divided by incremental update time."
 
+![Star topology recomputation speedup](docs/assets/star_speedup.png)
+
 ---
 
 ## Part 2: Chain Network Benchmarks
@@ -137,6 +141,8 @@ the recomputation-after-update comparison.
 > invalidate O(N) derived facts. In these cases, incremental maintenance can
 > approach the cost of recomputation; current recompute speedups should be
 > regenerated before reporting."
+
+![Chain topology recomputation speedup](docs/assets/chain_speedup.png)
 
 ---
 
@@ -255,6 +261,8 @@ The default `examples/run_benchmarks.rs` runner continues to cover the original
 star, chain, and random-cut experiments. The enterprise benchmark is available
 as a library function so research scripts can choose the host counts, service
 sets, and vulnerability density explicitly.
+
+![Layered enterprise update pattern speedups](docs/assets/enterprise_update_patterns.png)
 
 ---
 
