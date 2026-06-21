@@ -904,4 +904,87 @@ mod tests {
 
         assert_eq!(explainer.explain(&target), None);
     }
+
+    #[test]
+    fn explains_goal_reached_through_local_privilege_escalation() {
+        let base_facts = ProvenanceBaseFacts {
+            vulnerabilities: vec![VulnerabilityRecord::new(
+                "web01",
+                "CVE-2024-WEB",
+                "https",
+                PrivilegeLevel::User,
+            )],
+            local_vulnerabilities: vec![LocalVulnerabilityRecord::new(
+                "web01",
+                "CVE-2024-LOCAL",
+                PrivilegeLevel::Root,
+            )],
+            network_access: vec![NetworkAccessRule::new("internet", "web01", "https")],
+            firewall_rules: Vec::new(),
+            attacker_positions: vec![AttackerStartingPosition::new(
+                "eve",
+                "internet",
+                PrivilegeLevel::User,
+            )],
+            attacker_goals: vec![AttackerTargetGoal::new("eve", "web01")],
+        };
+        let derived_facts = ProvenanceDerivedFacts {
+            effective_network_access: vec![EffectiveNetworkAccess {
+                source_host: "internet".to_string(),
+                destination_host: "web01".to_string(),
+                service_name: "https".to_string(),
+            }],
+            code_executions: vec![
+                AttackerCodeExecution {
+                    attacker_id: "eve".to_string(),
+                    compromised_host: "internet".to_string(),
+                    obtained_privilege: PrivilegeLevel::User,
+                },
+                AttackerCodeExecution {
+                    attacker_id: "eve".to_string(),
+                    compromised_host: "web01".to_string(),
+                    obtained_privilege: PrivilegeLevel::User,
+                },
+                AttackerCodeExecution {
+                    attacker_id: "eve".to_string(),
+                    compromised_host: "web01".to_string(),
+                    obtained_privilege: PrivilegeLevel::Root,
+                },
+            ],
+            machines_owned: vec![AttackerOwnsMachine {
+                attacker_id: "eve".to_string(),
+                owned_host: "web01".to_string(),
+            }],
+            goals_reached: vec![AttackerGoalReached {
+                attacker_id: "eve".to_string(),
+                reached_target: "web01".to_string(),
+            }],
+        };
+
+        let explainer = Explainer::new(base_facts, derived_facts);
+        let target = Fact::GoalReached {
+            attacker_id: "eve".to_string(),
+            target: "web01".to_string(),
+        };
+        let explanation = explainer
+            .explain(&target)
+            .expect("local privilege escalation should explain the goal");
+
+        assert_eq!(
+            explanation.to_pretty_string(),
+            concat!(
+                "goalReached(eve, web01)\n",
+                "├── attackGoal(eve, web01)\n",
+                "└── ownsMachine(eve, web01)\n",
+                "    └── execCode(eve, web01, root)\n",
+                "        ├── execCode(eve, web01, user)\n",
+                "        │   ├── execCode(eve, internet, user)\n",
+                "        │   │   └── attackerLocated(eve, internet, user)\n",
+                "        │   ├── effectiveAccess(internet, web01, https)\n",
+                "        │   │   └── hacl(internet, web01, https)\n",
+                "        │   └── vulExists(web01, CVE-2024-WEB, https, user)\n",
+                "        └── localVulExists(web01, CVE-2024-LOCAL, root)\n",
+            )
+        );
+    }
 }
