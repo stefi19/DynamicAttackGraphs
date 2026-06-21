@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
+use std::fs;
+use std::path::Path;
 
 use crate::schema::{
     AttackerCodeExecution, AttackerGoalReached, AttackerOwnsMachine, AttackerStartingPosition,
@@ -129,6 +131,97 @@ impl fmt::Display for ExplanationTree {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.to_pretty_string())
     }
+}
+
+/// Exports an explanation tree as a Graphviz DOT derivation graph.
+///
+/// The graph contains fact nodes and explicit rule-application nodes:
+/// premise facts point into a rule node, and the rule node points to the
+/// derived output fact. This mirrors the proof structure while keeping the
+/// exporter independent from Differential Dataflow internals.
+pub fn export_explanation_to_dot(
+    tree: &ExplanationTree,
+    path: &Path,
+) -> Result<(), std::io::Error> {
+    let mut exporter = DotExporter::default();
+    let root_id = exporter.write_tree(tree, true);
+
+    let mut dot = String::new();
+    dot.push_str("digraph ExplanationTree {\n");
+    dot.push_str(
+        "    graph [rankdir=BT, bgcolor=\"white\", splines=ortho, nodesep=0.45, ranksep=0.7];\n",
+    );
+    dot.push_str("    node [fontname=\"Helvetica\", fontsize=11, margin=\"0.08,0.05\"];\n");
+    dot.push_str(
+        "    edge [fontname=\"Helvetica\", fontsize=9, color=\"#4b5563\", arrowsize=0.7];\n\n",
+    );
+    dot.push_str(&exporter.nodes);
+    dot.push('\n');
+    dot.push_str(&exporter.edges);
+    dot.push_str(&format!(
+        "\n    {{ rank=max; {root_id}; }}\n",
+        root_id = root_id
+    ));
+    dot.push_str("}\n");
+
+    fs::write(path, dot)
+}
+
+#[derive(Default)]
+struct DotExporter {
+    next_id: usize,
+    nodes: String,
+    edges: String,
+}
+
+impl DotExporter {
+    fn write_tree(&mut self, tree: &ExplanationTree, is_target: bool) -> String {
+        let fact_id = self.next_node_id("fact");
+        let label = dot_escape(&tree.fact.to_string());
+
+        let style = if is_target {
+            "shape=box, style=\"rounded,filled,bold\", fillcolor=\"#fecaca\", color=\"#dc2626\", penwidth=2.5"
+        } else if tree.derivation.is_some() {
+            "shape=box, style=\"rounded,filled\", fillcolor=\"#dbeafe\", color=\"#2563eb\""
+        } else {
+            "shape=box, style=\"rounded,filled\", fillcolor=\"#f3f4f6\", color=\"#9ca3af\""
+        };
+
+        self.nodes
+            .push_str(&format!("    {fact_id} [{style}, label=\"{label}\"];\n"));
+
+        if let Some(derivation) = &tree.derivation {
+            let rule_id = self.next_node_id("rule");
+            let rule_label = dot_escape(&derivation.rule_name);
+
+            self.nodes.push_str(&format!(
+                "    {rule_id} [shape=diamond, style=\"filled\", fillcolor=\"#fff7ed\", color=\"#ea580c\", label=\"{rule_label}\"];\n"
+            ));
+            self.edges
+                .push_str(&format!("    {rule_id} -> {fact_id} [penwidth=1.7];\n"));
+
+            for child in &tree.children {
+                let child_id = self.write_tree(child, false);
+                self.edges
+                    .push_str(&format!("    {child_id} -> {rule_id};\n"));
+            }
+        }
+
+        fact_id
+    }
+
+    fn next_node_id(&mut self, prefix: &str) -> String {
+        let id = format!("{prefix}_{}", self.next_id);
+        self.next_id += 1;
+        id
+    }
+}
+
+fn dot_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 impl From<&VulnerabilityRecord> for Fact {
