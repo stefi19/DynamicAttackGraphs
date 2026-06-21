@@ -1,0 +1,8 @@
+% Firewall deny blocks the direct internet-to-web path.
+attackerLocated(eve, internet, user).
+attackGoal(eve, web01).
+
+hacl(internet, web01, http).
+firewallDeny(internet, web01, http).
+
+vulExists(web01, cve_2024_web, http, root).

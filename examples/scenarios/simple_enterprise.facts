@@ -1,0 +1,11 @@
+% Simple enterprise path from the internet to an admin host.
+attackerLocated(eve, internet, user).
+attackGoal(eve, admin01).
+
+hacl(internet, web01, https).
+hacl(web01, app01, http).
+hacl(app01, admin01, ssh).
+
+vulExists(web01, cve_2024_web, https, user).
+vulExists(app01, cve_2024_app, http, user).
+vulExists(admin01, cve_2024_admin, ssh, root).

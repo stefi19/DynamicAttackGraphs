@@ -1,0 +1,12 @@
+% Two independent web paths can reach the same database goal.
+attackerLocated(eve, internet, user).
+attackGoal(eve, db01).
+
+hacl(internet, web_a, https).
+hacl(internet, web_b, https).
+hacl(web_a, db01, postgres).
+hacl(web_b, db01, postgres).
+
+vulExists(web_a, cve_2024_web_a, https, user).
+vulExists(web_b, cve_2024_web_b, https, user).
+vulExists(db01, cve_2024_db, postgres, root).
