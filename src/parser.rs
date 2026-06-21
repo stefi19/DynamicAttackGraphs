@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::schema::{
     AttackerStartingPosition, AttackerTargetGoal, FirewallRuleRecord, NetworkAccessRule,
@@ -14,6 +15,37 @@ pub enum InputFact {
     FirewallDeny(FirewallRuleRecord),
     AttackerLocated(AttackerStartingPosition),
     AttackGoal(AttackerTargetGoal),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InputScenario {
+    pub vulnerabilities: Vec<VulnerabilityRecord>,
+    pub network_access: Vec<NetworkAccessRule>,
+    pub firewall_rules: Vec<FirewallRuleRecord>,
+    pub attacker_positions: Vec<AttackerStartingPosition>,
+    pub attacker_goals: Vec<AttackerTargetGoal>,
+}
+
+impl InputScenario {
+    pub fn push_fact(&mut self, fact: InputFact) {
+        match fact {
+            InputFact::VulExists(vulnerability) => {
+                self.vulnerabilities.push(vulnerability);
+            }
+            InputFact::Hacl(network_access) => {
+                self.network_access.push(network_access);
+            }
+            InputFact::FirewallDeny(firewall_rule) => {
+                self.firewall_rules.push(firewall_rule);
+            }
+            InputFact::AttackerLocated(attacker_position) => {
+                self.attacker_positions.push(attacker_position);
+            }
+            InputFact::AttackGoal(attacker_goal) => {
+                self.attacker_goals.push(attacker_goal);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +179,26 @@ pub fn parse_fact_line(line: &str) -> Result<Option<InputFact>, ParseError> {
         }
         _ => Err(ParseError::UnknownPredicate(predicate.to_string())),
     }
+}
+
+pub fn parse_facts_file(path: &Path) -> Result<InputScenario, ParseError> {
+    let contents = fs::read_to_string(path).map_err(|error| ParseError::Io {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })?;
+
+    let mut scenario = InputScenario::default();
+
+    for (line_index, line) in contents.lines().enumerate() {
+        if let Some(fact) = parse_fact_line(line).map_err(|source| ParseError::Line {
+            line_number: line_index + 1,
+            source: Box::new(source),
+        })? {
+            scenario.push_fact(fact);
+        }
+    }
+
+    Ok(scenario)
 }
 
 fn parse_arguments(arguments: &str) -> Result<Vec<String>, ParseError> {
