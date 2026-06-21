@@ -583,7 +583,11 @@ The proposed approach is most beneficial when:
     \item \textbf{Updates are frequent}: Real-time monitoring scenarios where latency is critical.
 \end{enumerate}
 
-Performance is comparable to full recomputation when changes are global (e.g., modifying the attacker's start node) or when the topology is extremely deep (long chains). However, incremental computation is strictly non-regressive; it is never slower than full recomputation.
+Performance is comparable to full recomputation when changes are global (e.g.,
+modifying the attacker's start node) or when the topology is extremely deep
+(long chains). In the benchmarks used here, incremental maintenance was not
+observed to be worse than recomputation, but this should not be interpreted as a
+universal guarantee for every Differential Dataflow execution.
 
 \subsection{Practical Considerations}
 
@@ -596,23 +600,53 @@ The implementation utilizes Rust and the \texttt{timely} dataflow framework. Key
 \end{itemize}
 
 % ============================================================================
+% LIMITATIONS
+% ============================================================================
+\section{Limitations}
+
+The current system is a research prototype and supports only a subset of
+MulVAL-style attack graph rules. It includes network reachability, remote
+service exploitation, local privilege escalation, firewall deny rules, machine
+ownership, and target goals. It does not implement the full MulVAL rule base,
+host configuration model, credential reasoning, or all forms of prerequisite
+logic used in mature MulVAL deployments.
+
+The evaluated scenarios are synthetic or semi-synthetic. Star, chain,
+random-cut, and layered-enterprise topologies are useful for isolating
+performance behavior, but they do not capture all operational details of real
+enterprise networks. The CVE model is also simplified: vulnerability identifiers
+are treated as facts that grant a specified privilege on a service, rather than
+as rich semantic objects with preconditions, exploit availability, version
+ranges, or environmental constraints.
+
+The provenance layer currently reconstructs selected explanation paths from the
+final base and derived fact sets. It can explain one valid proof for a fact such
+as \texttt{goalReached}, but it does not enumerate all proofs, all minimal
+attack paths, or all changed explanations after an update. Finally, all
+benchmarks reported here use single-worker execution for measurement stability.
+Distributed Timely/Differential execution is a natural future direction, but it
+is not evaluated in this prototype.
+
+% ============================================================================
 % RELATED WORK
 % ============================================================================
 \section{Related Work}
 
-\subsection{Attack Graph Generation}
+\subsection{Attack Graph Generation and Representation}
 
-Sheyner et al.~\cite{sheyner2002automated} introduced model-checking approaches to attack graph generation. Ammann et al.~\cite{ammann2002scalable} proposed scalable algorithms based on graph reachability. MulVAL~\cite{ou2006mulval} pioneered the use of Datalog for declarative attack modeling, which this work builds upon.
+Sheyner et al.~\cite{sheyner2002automated} introduced model-checking approaches to attack graph generation. Ammann et al.~\cite{ammann2002scalable} proposed scalable algorithms based on graph reachability. MulVAL~\cite{ou2006mulval} pioneered the use of Datalog for declarative attack modeling. This paper builds on the MulVAL style of representing security conditions as logical facts and rules, but does not aim to replace the full MulVAL analyzer.
 
-NetSPA~\cite{ingols2006practical} and TVA~\cite{jajodia2005topological} provide efficient attack graph visualization but do not support incremental updates.
+NetSPA~\cite{ingols2006practical} and TVA~\cite{jajodia2005topological} provide efficient attack graph generation and visualization techniques. CARGen-style attack graph representation and generation work is also relevant as inspiration for producing structured scenarios and reusable attack graph artifacts. The present prototype focuses on incremental maintenance of derived facts rather than on rich graph interchange formats or complete scenario-generation pipelines.
 
 \subsection{Incremental Datalog}
 
-Incremental view maintenance for Datalog has been studied extensively~\cite{gupta1993maintaining}. The DRed algorithm~\cite{staudt1995incremental} handles recursive rules but requires explicit deletion tracking. Differential dataflow provides a general framework that subsumes these approaches.
+Incremental view maintenance for Datalog has been studied extensively~\cite{gupta1993maintaining}. The DRed algorithm~\cite{staudt1995incremental} handles recursive deletions by overdeleting potentially affected facts and then rederiving facts that remain supported. The Backward/Forward algorithm of Motik et al.~\cite{motik2015incremental} reduces overdeletion by using backward chaining to check alternate proofs and forward chaining to propagate consequences. This distinction matters: B/F is not simply a derivation-counting algorithm.
+
+Souffle~\cite{souffle2016} is a high-performance Datalog system and is a useful baseline for compiled Datalog evaluation. The present work differs in its choice of Differential Dataflow as the execution substrate, which provides signed multiplicities and incremental updates through dataflow operators rather than through a direct implementation of DRed or B/F.
 
 \subsection{Dataflow Systems}
 
-Naiad~\cite{murray2013naiad} introduced timely dataflow for iterative computation. Differential dataflow~\cite{mcsherry2013differential} extended this with change tracking. This work represents the first application of differential dataflow to security analysis.
+Naiad~\cite{murray2013naiad} introduced timely dataflow for iterative computation. Differential Dataflow~\cite{mcsherry2013differential} extended this model with collections of signed differences and efficient incremental maintenance. This paper applies those ideas to a security-analysis prototype for MulVAL-style attack graph rules. The contribution is therefore an implementation and evaluation of this mapping, not a new dataflow system.
 
 % ============================================================================
 % CONCLUSION
@@ -626,10 +660,13 @@ The evaluation demonstrates:
 \begin{enumerate}
     \item \textbf{Significant speedups}: Up to 25$\times$ for localized changes in star topologies.
     \item \textbf{Proportional updates}: Update time scales with affected nodes, not total network size.
-    \item \textbf{No regression}: Worst-case performance matches full recomputation.
+    \item \textbf{Worst-case behavior}: Deep chain-like updates approach the cost of full recomputation.
 \end{enumerate}
 
-This approach enables real-time security monitoring for dynamic networks, where sub-millisecond updates allow continuous assessment of security posture.
+This approach is a step toward real-time security monitoring for dynamic
+networks. The current results show that sub-millisecond or low-millisecond
+updates are feasible for selected localized synthetic updates, while deeper or
+more global changes remain closer to full recomputation.
 
 \subsection{Future Work}
 
