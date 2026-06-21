@@ -335,3 +335,164 @@ fn reached(host: &str) -> AttackerGoalReached {
         reached_target: host.to_string(),
     }
 }
+
+fn assert_incremental_update_matches_recompute(
+    initial_facts: BaseFacts,
+    updates: Vec<FactUpdate>,
+) -> (AttackGraphOutput, AttackGraphOutput) {
+    let (initial_output, incremental_after_update) =
+        collect_incremental_outputs(initial_facts.clone(), &updates);
+    let recomputed_initial = collect_recomputed_outputs(initial_facts.clone());
+
+    let mut updated_facts = initial_facts;
+    apply_updates_to_facts(&mut updated_facts, &updates);
+    let recomputed_after_update = collect_recomputed_outputs(updated_facts);
+
+    assert_eq!(initial_output, recomputed_initial);
+    assert_eq!(incremental_after_update, recomputed_after_update);
+
+    (initial_output, incremental_after_update)
+}
+
+#[test]
+fn simple_chain_update_matches_recompute() {
+    let facts = chain_base_facts();
+    let (_initial_output, after_update) = assert_incremental_update_matches_recompute(
+        facts,
+        vec![FactUpdate::InsertNetworkAccess(NetworkAccessRule::new(
+            "web", "db", "postgres",
+        ))],
+    );
+
+    assert!(after_update
+        .exec_code
+        .contains_key(&exec_on("db", PrivilegeLevel::Root)));
+    assert!(after_update.owns_machine.contains_key(&owns("db")));
+    assert!(after_update.goals_reached.contains_key(&reached("db")));
+}
+
+#[test]
+fn firewall_deny_update_matches_recompute() {
+    let mut facts = chain_base_facts();
+    facts
+        .network_access
+        .push(NetworkAccessRule::new("web", "db", "postgres"));
+
+    let (initial_output, after_update) = assert_incremental_update_matches_recompute(
+        facts,
+        vec![FactUpdate::InsertFirewallRule(
+            FirewallRuleRecord::create_deny_rule("internet", "web", "https"),
+        )],
+    );
+
+    assert!(initial_output.goals_reached.contains_key(&reached("db")));
+    assert!(!after_update
+        .exec_code
+        .contains_key(&exec_on("web", PrivilegeLevel::User)));
+    assert!(!after_update.goals_reached.contains_key(&reached("db")));
+}
+
+#[test]
+fn vulnerability_patch_update_matches_recompute() {
+    let mut facts = chain_base_facts();
+    facts
+        .network_access
+        .push(NetworkAccessRule::new("web", "db", "postgres"));
+
+    let patched_vulnerability =
+        VulnerabilityRecord::new("web", "CVE-WEB", "https", PrivilegeLevel::User);
+    let (initial_output, after_update) = assert_incremental_update_matches_recompute(
+        facts,
+        vec![FactUpdate::RemoveVulnerability(patched_vulnerability)],
+    );
+
+    assert!(initial_output.goals_reached.contains_key(&reached("db")));
+    assert!(!after_update
+        .exec_code
+        .contains_key(&exec_on("web", PrivilegeLevel::User)));
+    assert!(!after_update.goals_reached.contains_key(&reached("db")));
+}
+
+#[test]
+fn new_vulnerability_discovered_update_matches_recompute() {
+    let facts = BaseFacts {
+        vulnerabilities: vec![VulnerabilityRecord::new(
+            "web",
+            "CVE-WEB",
+            "https",
+            PrivilegeLevel::User,
+        )],
+        network_access: vec![
+            NetworkAccessRule::new("internet", "web", "https"),
+            NetworkAccessRule::new("web", "db", "postgres"),
+        ],
+        firewall_rules: Vec::new(),
+        attacker_positions: vec![AttackerStartingPosition::new(
+            "attacker",
+            "internet",
+            PrivilegeLevel::User,
+        )],
+        attacker_goals: vec![AttackerTargetGoal::new("attacker", "db")],
+    };
+
+    let (initial_output, after_update) = assert_incremental_update_matches_recompute(
+        facts,
+        vec![FactUpdate::InsertVulnerability(VulnerabilityRecord::new(
+            "db",
+            "CVE-DB",
+            "postgres",
+            PrivilegeLevel::Root,
+        ))],
+    );
+
+    assert!(!initial_output.goals_reached.contains_key(&reached("db")));
+    assert!(after_update
+        .exec_code
+        .contains_key(&exec_on("db", PrivilegeLevel::Root)));
+    assert!(after_update.goals_reached.contains_key(&reached("db")));
+}
+
+#[test]
+fn alternate_path_patch_still_reaches_goal_and_matches_recompute() {
+    let facts = BaseFacts {
+        vulnerabilities: vec![
+            VulnerabilityRecord::new("web_a", "CVE-WEB-A", "https", PrivilegeLevel::User),
+            VulnerabilityRecord::new("web_b", "CVE-WEB-B", "https", PrivilegeLevel::User),
+            VulnerabilityRecord::new("db", "CVE-DB", "postgres", PrivilegeLevel::Root),
+        ],
+        network_access: vec![
+            NetworkAccessRule::new("internet", "web_a", "https"),
+            NetworkAccessRule::new("internet", "web_b", "https"),
+            NetworkAccessRule::new("web_a", "db", "postgres"),
+            NetworkAccessRule::new("web_b", "db", "postgres"),
+        ],
+        firewall_rules: Vec::new(),
+        attacker_positions: vec![AttackerStartingPosition::new(
+            "attacker",
+            "internet",
+            PrivilegeLevel::User,
+        )],
+        attacker_goals: vec![AttackerTargetGoal::new("attacker", "db")],
+    };
+
+    let (initial_output, after_update) = assert_incremental_update_matches_recompute(
+        facts,
+        vec![FactUpdate::RemoveVulnerability(VulnerabilityRecord::new(
+            "web_a",
+            "CVE-WEB-A",
+            "https",
+            PrivilegeLevel::User,
+        ))],
+    );
+
+    assert!(initial_output
+        .exec_code
+        .contains_key(&exec_on("web_a", PrivilegeLevel::User)));
+    assert!(after_update
+        .exec_code
+        .contains_key(&exec_on("web_b", PrivilegeLevel::User)));
+    assert!(after_update
+        .exec_code
+        .contains_key(&exec_on("db", PrivilegeLevel::Root)));
+    assert!(after_update.goals_reached.contains_key(&reached("db")));
+}
