@@ -72,8 +72,16 @@ dot -Tpng graph_final.dot -o graph_final.png
 # Build
 cargo build --release
 
-# Run main demo
+# Run the hardcoded incremental demo
 cargo run --release
+
+# Run a MulVAL-like .facts scenario
+cargo run --release -- --scenario examples/scenarios/simple_enterprise.facts
+
+# Run a scenario and apply incremental removals/insertions from an update file
+cargo run --release -- \
+  --scenario examples/scenarios/simple_enterprise.facts \
+  --update path/to/update.facts
 
 # Run benchmarks
 cargo run --release --example run_benchmarks
@@ -83,6 +91,24 @@ cargo run --release --example simple_demo
 
 # Run visualization export
 cargo run --release --example graphviz_export
+```
+
+Scenario files use simple base facts:
+
+```prolog
+vulExists(web01, cve_2024_1234, http, user).
+hacl(internet, web01, https).
+firewallDeny(internet, web01, http).
+attackerLocated(eve, internet, user).
+attackGoal(eve, admin01).
+```
+
+Update files may remove existing base facts with:
+
+```prolog
+remove(vulExists(web01, cve_2024_1234, http, user)).
+remove(hacl(internet, web01, https)).
+remove(firewallDeny(internet, web01, http)).
 ```
 
 ---
