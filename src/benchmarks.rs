@@ -334,6 +334,39 @@ impl EnterpriseScenario {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnterpriseUpdatePattern {
+    PatchOneWebVulnerability,
+    PatchOneAppVulnerability,
+    AddDmzToAppFirewallDeny,
+    BatchPatchTenPercent,
+}
+
+impl EnterpriseUpdatePattern {
+    pub fn label(self) -> &'static str {
+        match self {
+            EnterpriseUpdatePattern::PatchOneWebVulnerability => "patch_one_web_vulnerability",
+            EnterpriseUpdatePattern::PatchOneAppVulnerability => "patch_one_app_vulnerability",
+            EnterpriseUpdatePattern::AddDmzToAppFirewallDeny => "add_dmz_to_app_firewall_deny",
+            EnterpriseUpdatePattern::BatchPatchTenPercent => "batch_patch_10_percent",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseScenarioUpdate {
+    pub pattern: EnterpriseUpdatePattern,
+    pub updated_scenario: EnterpriseScenario,
+    pub removed_vulnerabilities: Vec<VulnerabilityRecord>,
+    pub added_firewall_rules: Vec<FirewallRuleRecord>,
+}
+
+impl EnterpriseScenarioUpdate {
+    pub fn changed_base_fact_count(&self) -> usize {
+        self.removed_vulnerabilities.len() + self.added_firewall_rules.len()
+    }
+}
+
 pub fn generate_layered_enterprise_network(config: EnterpriseScenarioConfig) -> EnterpriseScenario {
     let web_hosts = layer_hosts("web", config.number_of_web_servers);
     let app_hosts = layer_hosts("app", config.number_of_app_servers);
@@ -417,6 +450,76 @@ pub fn generate_layered_enterprise_network(config: EnterpriseScenarioConfig) -> 
         firewall_rules: Vec::new(),
         attacker_positions,
         attacker_goals,
+    }
+}
+
+pub fn apply_enterprise_update_pattern(
+    scenario: &EnterpriseScenario,
+    pattern: EnterpriseUpdatePattern,
+) -> EnterpriseScenarioUpdate {
+    let mut updated_scenario = scenario.clone();
+    let mut removed_vulnerabilities = Vec::new();
+    let mut added_firewall_rules = Vec::new();
+
+    match pattern {
+        EnterpriseUpdatePattern::PatchOneWebVulnerability => {
+            remove_first_vulnerability_with_prefix(
+                &mut updated_scenario.vulnerabilities,
+                "web_",
+                &mut removed_vulnerabilities,
+            );
+        }
+        EnterpriseUpdatePattern::PatchOneAppVulnerability => {
+            remove_first_vulnerability_with_prefix(
+                &mut updated_scenario.vulnerabilities,
+                "app_",
+                &mut removed_vulnerabilities,
+            );
+        }
+        EnterpriseUpdatePattern::AddDmzToAppFirewallDeny => {
+            if let Some(access) = scenario.network_access.iter().find(|access| {
+                access.source_host.starts_with("web_")
+                    && access.destination_host.starts_with("app_")
+            }) {
+                let rule = FirewallRuleRecord::create_deny_rule(
+                    &access.source_host,
+                    &access.destination_host,
+                    &access.service_name,
+                );
+                updated_scenario.firewall_rules.push(rule.clone());
+                added_firewall_rules.push(rule);
+            }
+        }
+        EnterpriseUpdatePattern::BatchPatchTenPercent => {
+            let patch_count = (updated_scenario.vulnerabilities.len() / 10).max(1);
+            let patch_count = patch_count.min(updated_scenario.vulnerabilities.len());
+            removed_vulnerabilities.extend(
+                updated_scenario
+                    .vulnerabilities
+                    .drain(0..patch_count)
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    EnterpriseScenarioUpdate {
+        pattern,
+        updated_scenario,
+        removed_vulnerabilities,
+        added_firewall_rules,
+    }
+}
+
+fn remove_first_vulnerability_with_prefix(
+    vulnerabilities: &mut Vec<VulnerabilityRecord>,
+    host_prefix: &str,
+    removed_vulnerabilities: &mut Vec<VulnerabilityRecord>,
+) {
+    if let Some(index) = vulnerabilities
+        .iter()
+        .position(|vulnerability| vulnerability.host_name.starts_with(host_prefix))
+    {
+        removed_vulnerabilities.push(vulnerabilities.remove(index));
     }
 }
 
@@ -1402,5 +1505,68 @@ mod tests {
             .vulnerabilities
             .iter()
             .any(|vulnerability| vulnerability.host_name == "admin_0"));
+    }
+
+    #[test]
+    fn test_enterprise_patch_one_web_vulnerability_update() {
+        let scenario = generate_layered_enterprise_network(EnterpriseScenarioConfig::default());
+        let update = apply_enterprise_update_pattern(
+            &scenario,
+            EnterpriseUpdatePattern::PatchOneWebVulnerability,
+        );
+
+        assert_eq!(
+            update.pattern,
+            EnterpriseUpdatePattern::PatchOneWebVulnerability
+        );
+        assert_eq!(update.removed_vulnerabilities.len(), 1);
+        assert!(update.removed_vulnerabilities[0]
+            .host_name
+            .starts_with("web_"));
+        assert_eq!(
+            update.updated_scenario.vulnerabilities.len(),
+            scenario.vulnerabilities.len() - 1
+        );
+        assert_eq!(update.changed_base_fact_count(), 1);
+    }
+
+    #[test]
+    fn test_enterprise_firewall_deny_update() {
+        let scenario = generate_layered_enterprise_network(EnterpriseScenarioConfig::default());
+        let update = apply_enterprise_update_pattern(
+            &scenario,
+            EnterpriseUpdatePattern::AddDmzToAppFirewallDeny,
+        );
+
+        assert_eq!(update.removed_vulnerabilities.len(), 0);
+        assert_eq!(update.added_firewall_rules.len(), 1);
+        assert!(update.added_firewall_rules[0]
+            .source_zone
+            .starts_with("web_"));
+        assert!(update.added_firewall_rules[0]
+            .destination_host
+            .starts_with("app_"));
+        assert_eq!(update.updated_scenario.firewall_rules.len(), 1);
+        assert_eq!(update.changed_base_fact_count(), 1);
+    }
+
+    #[test]
+    fn test_enterprise_batch_patch_update() {
+        let scenario = generate_layered_enterprise_network(EnterpriseScenarioConfig {
+            vulnerability_density: 1.0,
+            ..EnterpriseScenarioConfig::default()
+        });
+        let update = apply_enterprise_update_pattern(
+            &scenario,
+            EnterpriseUpdatePattern::BatchPatchTenPercent,
+        );
+        let expected_patch_count = (scenario.vulnerabilities.len() / 10).max(1);
+
+        assert_eq!(update.removed_vulnerabilities.len(), expected_patch_count);
+        assert_eq!(
+            update.updated_scenario.vulnerabilities.len(),
+            scenario.vulnerabilities.len() - expected_patch_count
+        );
+        assert_eq!(update.changed_base_fact_count(), expected_patch_count);
     }
 }
