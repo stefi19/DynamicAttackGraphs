@@ -312,12 +312,13 @@ The key insight is that unaffected parts of the graph produce no differences---t
 % ============================================================================
 \section{Evaluation}
 
-This section evaluates three research questions:
+This section evaluates four research questions:
 
 \begin{enumerate}
-    \item[\textbf{RQ1}] How does incremental update time compare to full recomputation?
-    \item[\textbf{RQ2}] How does speedup scale with network size?
-    \item[\textbf{RQ3}] How does the position of a change affect update time?
+    \item[\textbf{RQ1}] Can MulVAL-style attack graph rules be expressed using Differential Dataflow operators?
+    \item[\textbf{RQ2}] How much faster are incremental updates than full recomputation?
+    \item[\textbf{RQ3}] How does topology affect incremental update performance?
+    \item[\textbf{RQ4}] Can provenance explain changed attack paths?
 \end{enumerate}
 
 \subsection{Experimental Setup}
@@ -328,6 +329,29 @@ This section evaluates three research questions:
     \item \textbf{Execution}: Single-threaded, release mode with optimizations
     \item \textbf{Metric}: Wall-clock time (median of 5 runs)
 \end{itemize}
+
+\subsection{Correctness Methodology}
+
+The evaluation separates performance measurement from correctness checking. For
+each small update scenario, the implementation computes the initial result using
+Differential Dataflow, applies the update incrementally, and then recomputes the
+same scenario from scratch using the updated base facts. The incremental output
+sets are required to match the full recomputation output sets exactly. This
+comparison is the main correctness baseline for update maintenance because both
+paths should represent the same post-update database state.
+
+For small graphs, the same facts are also evaluated using a separate naive
+fixpoint implementation based on hash sets. This evaluator repeatedly derives
+\texttt{execCode}, \texttt{ownsMachine}, and \texttt{goalReached} facts until a
+fixed point is reached. It is intentionally simple and slow, and is used as an
+oracle for small scenarios rather than as a performance baseline.
+
+The tests also cover stratified negation through firewall deny rules. In these
+scenarios, adding a deny fact removes the corresponding
+\texttt{effectiveAccess} fact and retracts dependent compromises, while removing
+or avoiding the deny fact allows the path to be rederived. This checks that the
+antijoin encoding used for firewall rules behaves consistently under
+incremental updates and recomputation.
 
 \subsection{Network Topologies}
 
@@ -351,7 +375,21 @@ A linear chain: node$_0 \rightarrow$ node$_1 \rightarrow \cdots \rightarrow$ nod
     \item \textbf{Expected behavior}: All nodes $k+1$ to $N-1$ lose their attack paths
 \end{itemize}
 
-\subsection{RQ1: Incremental vs. Full Recomputation}
+\subsection{RQ1: Expressing MulVAL-style Rules}
+
+The implemented rule subset can be expressed using Differential Dataflow
+operators without changing the declarative meaning of the rules. Base facts such
+as vulnerabilities, network access, firewall denies, attacker positions, and
+goals are represented as input collections. Derived facts are computed with
+joins, maps, antijoins, fixed-point iteration, and distinct consolidation.
+
+This demonstrates that the core shape of a MulVAL-style attack graph
+calculation can be encoded in Differential Dataflow. The claim is limited to the
+implemented subset: remote exploitation through network access, local privilege
+escalation, ownership through root execution, goal reachability, and firewall
+deny rules as stratified negation.
+
+\subsection{RQ2: Incremental vs. Full Recomputation}
 
 \begin{table}[H]
 \centering
@@ -372,7 +410,7 @@ A linear chain: node$_0 \rightarrow$ node$_1 \rightarrow \cdots \rightarrow$ nod
 
 Table~\ref{tab:star} presents the results for the star topology. Initial computation time ranges from 1.58 ms (51 nodes) to 4.11 ms (1001 nodes). Incremental update times range from 501 $\mu$s to 161 $\mu$s.
 
-\subsection{RQ2: Scalability}
+\subsection{RQ3: Scalability}
 
 \begin{figure}[t]
 \centering
@@ -481,6 +519,21 @@ Table~\ref{tab:random} shows the minimum, maximum, and average update times.
 \end{figure}
 
 Figure~\ref{fig:position_cost} illustrates the relationship between the cut position and the update time. The update cost decreases as the cut position moves towards the end of the chain.
+
+\subsection{RQ4: Provenance}
+
+The prototype includes a lightweight provenance layer that reconstructs one
+valid explanation tree for selected derived facts after computation. For
+example, a \texttt{goalReached(eve, admin01)} fact can be explained through the
+corresponding \texttt{ownsMachine} fact, the root-level \texttt{execCode} fact,
+the effective network access facts, and the vulnerability facts that support the
+path. This provenance is currently reconstructed from the final base and derived
+fact sets rather than maintained inside Differential Dataflow itself.
+
+The current implementation therefore supports RQ4 for selected changed paths:
+it can explain why a goal is reachable after an update, or why an alternative
+path still supports the same goal. It does not yet enumerate all proofs or all
+minimal attack paths.
 
 % ============================================================================
 % DISCUSSION
