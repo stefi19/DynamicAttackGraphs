@@ -77,8 +77,9 @@ fn run_fact_file_scenario(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     println!("========================================================================");
     println!("Scenario: {}", scenario_path.display());
     println!(
-        "Loaded {} vulnerabilities, {} network edges, {} firewall rules, {} attacker positions, {} goals",
+        "Loaded {} remote vulnerabilities, {} local vulnerabilities, {} network edges, {} firewall rules, {} attacker positions, {} goals",
         scenario.vulnerabilities.len(),
+        scenario.local_vulnerabilities.len(),
         scenario.network_access.len(),
         scenario.firewall_rules.len(),
         scenario.attacker_positions.len(),
@@ -285,6 +286,7 @@ fn apply_fact_insert(
 ) {
     match fact {
         InputFact::VulExists(vulnerability) => vulnerability_input.insert(vulnerability.clone()),
+        InputFact::LocalVulExists(_) => {}
         InputFact::Hacl(access) => network_access_input.insert(access.clone()),
         InputFact::FirewallDeny(rule) => firewall_rules_input.insert(rule.clone()),
         InputFact::AttackerLocated(position) => attacker_position_input.insert(position.clone()),
@@ -302,6 +304,7 @@ fn apply_fact_remove(
 ) {
     match fact {
         InputFact::VulExists(vulnerability) => vulnerability_input.remove(vulnerability.clone()),
+        InputFact::LocalVulExists(_) => {}
         InputFact::Hacl(access) => network_access_input.remove(access.clone()),
         InputFact::FirewallDeny(rule) => firewall_rules_input.remove(rule.clone()),
         InputFact::AttackerLocated(position) => attacker_position_input.remove(position.clone()),

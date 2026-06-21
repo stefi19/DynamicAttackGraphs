@@ -72,6 +72,28 @@ impl VulnerabilityRecord {
     }
 }
 
+// A local privilege escalation vulnerability observed on a host.
+// This maps to `localVulExists(Host, CVE, Priv)` and is exploitable
+// only after an attacker already has non-root code execution on Host.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
+)]
+pub struct LocalVulnerabilityRecord {
+    pub host_name: HostIdentifier,
+    pub vulnerability_id: VulnerabilityIdentifier,
+    pub privilege_gained_on_exploit: PrivilegeLevel,
+}
+
+impl LocalVulnerabilityRecord {
+    pub fn new(host_name: &str, vulnerability_id: &str, privilege_gained: PrivilegeLevel) -> Self {
+        Self {
+            host_name: host_name.to_string(),
+            vulnerability_id: vulnerability_id.to_string(),
+            privilege_gained_on_exploit: privilege_gained,
+        }
+    }
+}
+
 // Network connection between two hosts
 // Similar to MulVAL's hacl predicate
 #[derive(

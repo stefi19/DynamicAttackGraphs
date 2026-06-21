@@ -4,13 +4,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::schema::{
-    AttackerStartingPosition, AttackerTargetGoal, FirewallRuleRecord, NetworkAccessRule,
-    PrivilegeLevel, VulnerabilityRecord,
+    AttackerStartingPosition, AttackerTargetGoal, FirewallRuleRecord, LocalVulnerabilityRecord,
+    NetworkAccessRule, PrivilegeLevel, VulnerabilityRecord,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputFact {
     VulExists(VulnerabilityRecord),
+    LocalVulExists(LocalVulnerabilityRecord),
     Hacl(NetworkAccessRule),
     FirewallDeny(FirewallRuleRecord),
     AttackerLocated(AttackerStartingPosition),
@@ -26,6 +27,7 @@ pub enum InputUpdate {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InputScenario {
     pub vulnerabilities: Vec<VulnerabilityRecord>,
+    pub local_vulnerabilities: Vec<LocalVulnerabilityRecord>,
     pub network_access: Vec<NetworkAccessRule>,
     pub firewall_rules: Vec<FirewallRuleRecord>,
     pub attacker_positions: Vec<AttackerStartingPosition>,
@@ -37,6 +39,9 @@ impl InputScenario {
         match fact {
             InputFact::VulExists(vulnerability) => {
                 self.vulnerabilities.push(vulnerability);
+            }
+            InputFact::LocalVulExists(vulnerability) => {
+                self.local_vulnerabilities.push(vulnerability);
             }
             InputFact::Hacl(network_access) => {
                 self.network_access.push(network_access);
@@ -151,6 +156,16 @@ pub fn parse_fact_line(line: &str) -> Result<Option<InputFact>, ParseError> {
                 &arguments[2],
                 parse_privilege(&arguments[3])?,
             ))))
+        }
+        "localVulExists" => {
+            require_arity(predicate, &arguments, 3)?;
+            Ok(Some(InputFact::LocalVulExists(
+                LocalVulnerabilityRecord::new(
+                    &arguments[0],
+                    &arguments[1],
+                    parse_privilege(&arguments[2])?,
+                ),
+            )))
         }
         "hacl" => {
             require_arity(predicate, &arguments, 3)?;
@@ -305,6 +320,12 @@ mod tests {
             ))))
         );
         assert_eq!(
+            parse_fact_line("localVulExists(web01, cve_2024_local, root)."),
+            Ok(Some(InputFact::LocalVulExists(
+                LocalVulnerabilityRecord::new("web01", "cve_2024_local", PrivilegeLevel::Root)
+            )))
+        );
+        assert_eq!(
             parse_fact_line("firewallDeny(internet, web01, http)."),
             Ok(Some(InputFact::FirewallDeny(
                 FirewallRuleRecord::create_deny_rule("internet", "web01", "http")
@@ -368,6 +389,7 @@ mod tests {
             r#"
                 # Enterprise scenario
                 vulExists(web01, cve_2024_1234, http, user).
+                localVulExists(web01, cve_2024_local, root).
                 hacl(internet, web01, http).
                 firewallDeny(internet, db01, postgres).
                 attackerLocated(eve, internet, user).
@@ -380,6 +402,7 @@ mod tests {
         std::fs::remove_file(&path).expect("test fact file should be removable");
 
         assert_eq!(scenario.vulnerabilities.len(), 1);
+        assert_eq!(scenario.local_vulnerabilities.len(), 1);
         assert_eq!(scenario.network_access.len(), 1);
         assert_eq!(scenario.firewall_rules.len(), 1);
         assert_eq!(scenario.attacker_positions.len(), 1);
