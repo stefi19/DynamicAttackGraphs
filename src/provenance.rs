@@ -587,6 +587,65 @@ impl Explainer {
             ));
         }
 
+        let mut local_vulnerabilities = self
+            .base_facts
+            .iter()
+            .filter_map(|fact| match fact {
+                Fact::LocalVulExists {
+                    host: vuln_host,
+                    vulnerability_id,
+                    privilege: gained_privilege,
+                } if vuln_host == host && gained_privilege == privilege => Some(vulnerability_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        local_vulnerabilities.sort();
+
+        for vulnerability_id in local_vulnerabilities {
+            let local_vulnerability_fact = Fact::LocalVulExists {
+                host: host.to_string(),
+                vulnerability_id: vulnerability_id.clone(),
+                privilege: privilege.clone(),
+            };
+
+            let mut previous_exec_facts = self
+                .derived_facts
+                .iter()
+                .filter_map(|fact| match fact {
+                    Fact::ExecCode {
+                        attacker_id: exec_attacker_id,
+                        host: exec_host,
+                        privilege: exec_privilege,
+                    } if exec_attacker_id == attacker_id
+                        && exec_host == host
+                        && exec_privilege != &PrivilegeLevel::Root =>
+                    {
+                        let previous_fact = Fact::ExecCode {
+                            attacker_id: exec_attacker_id.clone(),
+                            host: exec_host.clone(),
+                            privilege: exec_privilege.clone(),
+                        };
+                        (previous_fact != target_fact).then_some(previous_fact)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            previous_exec_facts.sort();
+
+            for previous_exec_fact in previous_exec_facts {
+                let previous_exec_tree = self.explain_fact(&previous_exec_fact, visiting)?;
+                let local_vulnerability_tree =
+                    self.explain_fact(&local_vulnerability_fact, visiting)?;
+                let premises = vec![previous_exec_fact, local_vulnerability_fact];
+
+                return Some(ExplanationTree::derived(
+                    target_fact,
+                    DerivationStep::new("exec_code_from_local_privilege_escalation", premises),
+                    vec![previous_exec_tree, local_vulnerability_tree],
+                ));
+            }
+        }
+
         let mut vulnerabilities = self
             .base_facts
             .iter()
