@@ -100,11 +100,11 @@ e.c.lupu@imperial.ac.uk}
 % ABSTRACT
 % ============================================================================
 \begin{abstract}
-Attack graphs are fundamental tools for security analysis, modeling how an attacker can chain vulnerabilities to compromise network resources. However, traditional attack graph generation algorithms recompute the entire graph after each change, making them unsuitable for dynamic environments where vulnerabilities are constantly discovered and patched.
+Attack graphs are fundamental tools for security analysis, modeling how an attacker can chain vulnerabilities to compromise network resources. However, many attack graph workflows recompute the derived graph after each change, making them poorly suited to dynamic environments where vulnerabilities are discovered, patched, and reclassified frequently.
 
-This paper presents a novel approach to attack graph maintenance based on \textit{differential dataflow}, a computational model that automatically propagates changes through a dataflow graph. The system translates Datalog-style security rules into differential dataflow operators, enabling \textit{incremental} updates: when a vulnerability is patched, only the affected attack paths are recomputed.
+This paper presents a Differential Dataflow-based approach for incremental maintenance of MulVAL-style attack graph rules. The prototype translates a subset of Datalog-style security rules into differential dataflow operators, including recursive lateral movement, firewall negation, local privilege escalation, and goal reachability. It is not intended as a full MulVAL replacement: the current implementation focuses on a research subset of rules and on the maintenance problem rather than complete vulnerability semantics.
 
-The evaluation considers synthetic network topologies ranging from 50 to 1000 nodes. For star topologies with localized changes, the approach achieves speedups of up to \textbf{25$\times$} compared to full recomputation. For chain topologies, the results demonstrate that update time is proportional to the number of affected nodes, not the total network size. The implementation is open-source and provides a foundation for real-time security monitoring in dynamic networks.
+The evaluation compares incremental updates against full recomputation after applying the same update. For star topologies with localized changes, the approach achieves speedups of up to \textbf{25$\times$}. Chain and random-cut experiments show the central performance property: localized updates are faster when work is proportional to the affected region rather than the total network. The results support Differential Dataflow as a practical substrate for research on dynamic attack graph maintenance, while also exposing cases where deep or global changes approach recomputation cost.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -131,18 +131,18 @@ Traditional attack graph tools like MulVAL~\cite{ou2006mulval} and NetSPA~\cite{
 
 \subsection{Contribution}
 
-This work presents an \textit{incremental} approach to attack graph maintenance using \textit{differential dataflow}~\cite{mcsherry2013differential}. The key insight is that attack graph rules can be expressed as dataflow operators, and differential dataflow automatically tracks how changes propagate through these operators.
+This work presents an \textit{incremental} approach to maintaining a subset of MulVAL-style attack graph rules using \textit{Differential Dataflow}~\cite{mcsherry2013differential}. The key insight is that attack graph rules can be expressed as dataflow operators, and differential updates can track how changes propagate through those operators without rebuilding all derived facts.
 
 The contributions are:
 
 \begin{enumerate}
-    \item \textbf{Translation methodology}: The paper demonstrates how to translate MulVAL-style Datalog rules into differential dataflow operators, including handling of recursive rules via fixed-point iteration and negation via antijoin.
+    \item \textbf{Translation methodology}: The paper demonstrates how a research subset of MulVAL-style Datalog rules can be translated into Differential Dataflow operators, including recursive rules via fixed-point iteration and stratified negation via antijoin.
     
-    \item \textbf{Incremental maintenance}: The system achieves update complexity of $O(\Delta E \times \Delta d)$, where $\Delta E$ is the number of affected edges and $\Delta d$ is the local iteration depth---compared to $O(E \times D)$ for full recomputation.
+    \item \textbf{Incremental maintenance}: The prototype supports insertions and deletions of base facts and updates derived attack graph facts using differential multiplicities. The expected update cost depends on the affected region, characterized by $\Delta E$ affected edges and local iteration depth $\Delta d$, rather than only on total graph size.
     
-    \item \textbf{Empirical evaluation}: The study demonstrates speedups of up to 25$\times$ for localized changes in star topologies and 2$\times$ average speedup for random changes in chain topologies.
+    \item \textbf{Empirical evaluation}: The study compares incremental updates with full recomputation on synthetic and semi-synthetic topologies, showing large speedups for localized changes and near-recomputation cost for worst-case chain-like propagation.
     
-    \item \textbf{Open-source implementation}: The Rust implementation is publicly available, with Docker support for reproducibility.
+    \item \textbf{Correctness and explainability support}: The implementation includes recomputation and naive fixpoint baselines for small scenarios, parser support for MulVAL-like fact files, and an initial provenance layer for explaining selected derived facts.
 \end{enumerate}
 
 % ============================================================================
