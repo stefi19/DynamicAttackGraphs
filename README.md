@@ -35,27 +35,33 @@ research reporting should use the full recomputation-after-update columns:
 
 ---
 
-## 📊 Visualizing Attack Graphs
+## 📊 Visual Results
 
-Generate before/after images showing how patching breaks attack paths:
+The repository includes generated figures for the current prototype. Exact
+benchmark numbers depend on machine and runtime conditions; regenerate all
+figures and the paper with `./scripts/generate_all_artifacts.sh` before using
+numbers in final research reporting.
+
+### Attack Graph Before and After Patch
+
+The Graphviz example generates before/after images showing how patching breaks
+attack paths:
 
 ```bash
 # Run the visualization example
 cargo run --release --example graphviz_export
 
 # Convert to PNG (requires graphviz)
-dot -Tpng graph_initial.dot -o graph_initial.png
-dot -Tpng graph_final.dot -o graph_final.png
-
-# Or use the helper script
-./generate_graphs.sh
+dot -Tpng graph_initial.dot -o docs/assets/graph_initial.png
+dot -Tpng graph_final.dot -o docs/assets/graph_final.png
 ```
 
-**Result:** Two images showing the attack path in red, then disappearing after the patch.
+Red edges mark active attack paths. After the patch, dependent paths disappear
+from the active compromise chain.
 
 | Before Patch | After Patch |
 |:---:|:---:|
-| ![Initial](graph_initial.png) | ![Final](graph_final.png) |
+| ![Initial attack graph](docs/assets/graph_initial.png) | ![Attack graph after patch](docs/assets/graph_final.png) |
 
 **Legend:**
 - 🔵 Blue: Attacker starting position
@@ -80,6 +86,21 @@ facts as blue boxes, rule applications as orange diamonds, and the selected
 target goal highlighted in red. The provenance layer reconstructs one valid
 explanation after computation; it does not enumerate all minimal attack paths or
 store proof trees inside Differential Dataflow.
+
+![Provenance explanation tree](docs/assets/explanation_goal.png)
+
+### Benchmark Plots
+
+The benchmark plots compare localized incremental updates against full
+recomputation after the same update.
+
+![Star topology speedup](docs/assets/star_speedup.png)
+
+![Chain topology speedup](docs/assets/chain_speedup.png)
+
+![Incremental update versus full recomputation](docs/assets/incremental_vs_recompute.png)
+
+![Layered enterprise update patterns](docs/assets/enterprise_update_patterns.png)
 
 ---
 
@@ -159,6 +180,21 @@ Regenerate current numbers with:
 ```bash
 cargo run --release --example run_benchmarks -- --csv results.csv
 ```
+
+---
+
+## Regenerating Figures and Paper
+
+```bash
+./scripts/generate_all_artifacts.sh
+```
+
+Dependencies:
+- Rust stable
+- Graphviz (`brew install graphviz` on macOS)
+- Python 3
+- matplotlib (`pip install matplotlib`)
+- LaTeX distribution with `latexmk` or `pdflatex`/`bibtex`
 
 ---
 
