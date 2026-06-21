@@ -2,18 +2,16 @@
 // Shows how the attack graph updates incrementally when facts change
 
 use std::path::PathBuf;
+use std::process;
 use std::time::Instant;
 
 use clap::Parser;
-use differential_dataflow::input::Input;
+use differential_dataflow::input::{Input, InputSession};
+use dynamic_attack_graphs::{
+    build_attack_graph, parse_facts_file, AttackerStartingPosition, AttackerTargetGoal,
+    FirewallRuleRecord, InputScenario, NetworkAccessRule, PrivilegeLevel, VulnerabilityRecord,
+};
 use timely::dataflow::operators::probe::Handle;
-
-mod parser;
-mod rules;
-mod schema;
-
-use rules::build_attack_graph;
-use schema::*;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -42,11 +40,195 @@ fn main() {
     let cli = Cli::parse();
 
     if cli.scenario.is_some() {
-        println!("Scenario execution is not implemented yet.");
+        if let Err(error) = run_fact_file_scenario(&cli) {
+            eprintln!("error: {error}");
+            process::exit(1);
+        }
         return;
     }
 
     run_hardcoded_demo();
+}
+
+fn run_fact_file_scenario(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let scenario_path = cli
+        .scenario
+        .as_ref()
+        .expect("scenario path should exist when scenario mode is selected");
+    let scenario = parse_facts_file(scenario_path)?;
+
+    if let Some(fact) = &cli.explain {
+        println!("--explain is not implemented yet; requested fact: {fact}");
+    }
+    if let Some(path) = &cli.export_dot {
+        println!(
+            "--export-dot is not implemented yet; requested path: {}",
+            path.display()
+        );
+    }
+    if let Some(path) = &cli.update {
+        println!(
+            "--update is not implemented yet; requested path: {}",
+            path.display()
+        );
+    }
+
+    println!("========================================================================");
+    println!("     Dynamic Attack Graphs using Differential Dataflow");
+    println!("                    Scenario File Mode");
+    println!("========================================================================");
+    println!("Scenario: {}", scenario_path.display());
+    println!(
+        "Loaded {} vulnerabilities, {} network edges, {} firewall rules, {} attacker positions, {} goals",
+        scenario.vulnerabilities.len(),
+        scenario.network_access.len(),
+        scenario.firewall_rules.len(),
+        scenario.attacker_positions.len(),
+        scenario.attacker_goals.len()
+    );
+    println!("------------------------------------------------------------------------");
+    println!("DERIVED FACTS");
+    println!("------------------------------------------------------------------------");
+
+    timely::execute_directly(move |worker| {
+        let mut computation_probe = Handle::new();
+
+        let (
+            mut vulnerability_input,
+            mut network_access_input,
+            mut firewall_rules_input,
+            mut attacker_position_input,
+            mut attacker_goal_input,
+        ) = worker.dataflow::<usize, _, _>(|scope| {
+            let (vuln_handle, vulnerability_collection) =
+                scope.new_collection::<VulnerabilityRecord, isize>();
+            let (network_handle, network_access_collection) =
+                scope.new_collection::<NetworkAccessRule, isize>();
+            let (firewall_handle, firewall_rules_collection) =
+                scope.new_collection::<FirewallRuleRecord, isize>();
+            let (position_handle, attacker_positions_collection) =
+                scope.new_collection::<AttackerStartingPosition, isize>();
+            let (goal_handle, attacker_goals_collection) =
+                scope.new_collection::<AttackerTargetGoal, isize>();
+
+            let (code_execution_results, machine_ownership_results, goal_reached_results) =
+                build_attack_graph(
+                    &vulnerability_collection,
+                    &network_access_collection,
+                    &firewall_rules_collection,
+                    &attacker_positions_collection,
+                    &attacker_goals_collection,
+                );
+
+            code_execution_results
+                .inspect(|(data, timestamp, difference)| {
+                    let change_type = if *difference > 0 { "+" } else { "-" };
+                    println!("  [t={}] {} {}", timestamp, change_type, data);
+                })
+                .probe_with(&mut computation_probe);
+
+            machine_ownership_results
+                .inspect(|(data, timestamp, difference)| {
+                    let change_type = if *difference > 0 { "+" } else { "-" };
+                    println!("  [t={}] {} {}", timestamp, change_type, data);
+                })
+                .probe_with(&mut computation_probe);
+
+            goal_reached_results
+                .inspect(|(data, timestamp, difference)| {
+                    let change_type = if *difference > 0 { "+" } else { "-" };
+                    println!(
+                        "  [t={}] {} {} (TARGET COMPROMISED)",
+                        timestamp, change_type, data
+                    );
+                })
+                .probe_with(&mut computation_probe);
+
+            (
+                vuln_handle,
+                network_handle,
+                firewall_handle,
+                position_handle,
+                goal_handle,
+            )
+        });
+
+        let computation_start_time = Instant::now();
+        insert_scenario_facts(
+            &scenario,
+            &mut vulnerability_input,
+            &mut network_access_input,
+            &mut firewall_rules_input,
+            &mut attacker_position_input,
+            &mut attacker_goal_input,
+        );
+        advance_all_inputs(
+            1,
+            &mut vulnerability_input,
+            &mut network_access_input,
+            &mut firewall_rules_input,
+            &mut attacker_position_input,
+            &mut attacker_goal_input,
+        );
+
+        while computation_probe.less_than(&1) {
+            worker.step();
+        }
+
+        println!("------------------------------------------------------------------------");
+        println!(
+            "Initial scenario computation completed in {:?}",
+            computation_start_time.elapsed()
+        );
+    });
+
+    Ok(())
+}
+
+fn insert_scenario_facts(
+    scenario: &InputScenario,
+    vulnerability_input: &mut InputSession<usize, VulnerabilityRecord, isize>,
+    network_access_input: &mut InputSession<usize, NetworkAccessRule, isize>,
+    firewall_rules_input: &mut InputSession<usize, FirewallRuleRecord, isize>,
+    attacker_position_input: &mut InputSession<usize, AttackerStartingPosition, isize>,
+    attacker_goal_input: &mut InputSession<usize, AttackerTargetGoal, isize>,
+) {
+    for vulnerability in &scenario.vulnerabilities {
+        vulnerability_input.insert(vulnerability.clone());
+    }
+    for access in &scenario.network_access {
+        network_access_input.insert(access.clone());
+    }
+    for rule in &scenario.firewall_rules {
+        firewall_rules_input.insert(rule.clone());
+    }
+    for position in &scenario.attacker_positions {
+        attacker_position_input.insert(position.clone());
+    }
+    for goal in &scenario.attacker_goals {
+        attacker_goal_input.insert(goal.clone());
+    }
+}
+
+fn advance_all_inputs(
+    time: usize,
+    vulnerability_input: &mut InputSession<usize, VulnerabilityRecord, isize>,
+    network_access_input: &mut InputSession<usize, NetworkAccessRule, isize>,
+    firewall_rules_input: &mut InputSession<usize, FirewallRuleRecord, isize>,
+    attacker_position_input: &mut InputSession<usize, AttackerStartingPosition, isize>,
+    attacker_goal_input: &mut InputSession<usize, AttackerTargetGoal, isize>,
+) {
+    vulnerability_input.advance_to(time);
+    network_access_input.advance_to(time);
+    firewall_rules_input.advance_to(time);
+    attacker_position_input.advance_to(time);
+    attacker_goal_input.advance_to(time);
+
+    vulnerability_input.flush();
+    network_access_input.flush();
+    firewall_rules_input.flush();
+    attacker_position_input.flush();
+    attacker_goal_input.flush();
 }
 
 fn run_hardcoded_demo() {
@@ -59,7 +241,6 @@ fn run_hardcoded_demo() {
     // Run the timely dataflow computation
     timely::execute_from_args(std::env::args(), |worker| {
         let worker_index = worker.index();
-        let total_workers = worker.peers();
 
         // Only the first worker prints output
         let is_main_worker = worker_index == 0;
@@ -74,7 +255,6 @@ fn run_hardcoded_demo() {
             mut firewall_rules_input,
             mut attacker_position_input,
             mut attacker_goal_input,
-            output_probe,
         ) = worker.dataflow::<usize, _, _>(|scope| {
             // Create input collections for each fact type
             let (vuln_handle, vulnerability_collection) =
@@ -134,15 +314,12 @@ fn run_hardcoded_demo() {
                 })
                 .probe_with(&mut computation_probe);
 
-            let output_probe = goal_reached_results.probe();
-
             (
                 vuln_handle,
                 network_handle,
                 firewall_handle,
                 position_handle,
                 goal_handle,
-                output_probe,
             )
         });
 
