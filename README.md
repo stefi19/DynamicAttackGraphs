@@ -1,8 +1,16 @@
 # Dynamic Attack Graphs using Differential Dataflow
 
-**Incremental computation of security attack graphs using Rust and differential dataflow.**
+**Research prototype for incremental maintenance of MulVAL-style attack graph rules using Rust and Differential Dataflow.**
 
-This project demonstrates that patching a single vulnerability in a 1000-node network updates the attack graph in **160 microseconds** instead of 4 milliseconds — a **25x speedup** over full recomputation.
+The prototype supports recursive attack propagation, stratified firewall negation,
+local privilege escalation, MulVAL-like scenario files, naive fixpoint validation,
+full recomputation baselines, CSV benchmark export, and initial provenance
+explanations. It implements a subset of MulVAL-style rules; it is not a full
+MulVAL replacement or a production security analyzer.
+
+In localized synthetic star scenarios, incremental updates are substantially
+faster than recomputation. Exact speedups should be regenerated with the current
+benchmark runner before being reported.
 
 ---
 
@@ -15,15 +23,14 @@ docker build -t attack-graph .
 docker run --rm attack-graph
 ```
 
-This runs the full benchmark suite and shows speedup tables like:
+This runs the benchmark suite and prints timing tables. Older example output may
+include speedups comparing initial computation with incremental update; current
+research reporting should use the full recomputation-after-update columns:
 
 ```
-| Nodes | Initial (ms) | Incremental (us) | Speedup |
-|------:|-------------:|-----------------:|--------:|
-|    51 |         1.58 |           501.08 |    3.2x |
-|   101 |         1.96 |           413.25 |    4.7x |
-|   501 |         3.48 |           281.58 |   12.4x |
-|  1001 |         4.11 |           160.88 |   25.6x |  <-- ⭐
+| Nodes | Initial (ms) | Incremental (us) | Recompute after update (ms) | Recompute speedup |
+|------:|-------------:|-----------------:|----------------------------:|------------------:|
+|  ...  |          ... |              ... |                         ... |               ... |
 ```
 
 ---
@@ -135,13 +142,19 @@ See [BENCHMARKS.md](BENCHMARKS.md) for detailed analysis.
 
 ### Summary
 
-| Topology | Change Type | Speedup |
-|----------|-------------|---------|
-| Star (1000 nodes) | Patch 1 leaf | **25x** |
-| Chain (random cut) | Patch random node | **2x average** |
-| Chain (worst case) | Patch at start | 1x (expected) |
+| Topology | Change Type | Expected Behavior |
+|----------|-------------|-------------------|
+| Star | Patch one leaf | Localized update; recomputation speedup should be largest |
+| Chain random cut | Patch random node | Cost depends on downstream affected region |
+| Chain worst case | Patch near start | Approaches full recomputation cost |
+| Layered enterprise | Patch or firewall update | More realistic layered propagation and fan-out |
 
 **Key insight:** Incremental update complexity is O(affected nodes), not O(total nodes).
+Regenerate current numbers with:
+
+```bash
+cargo run --release --example run_benchmarks -- --csv results.csv
+```
 
 ---
 
@@ -180,6 +193,9 @@ When any input changes, only affected derived facts are recomputed.
 src/
   schema.rs      - Data type definitions
   rules.rs       - Attack graph inference rules
+  naive.rs       - HashSet fixpoint evaluator for correctness checks
+  parser.rs      - MulVAL-like .facts parser
+  provenance.rs  - Explanation trees and DOT export
   benchmarks.rs  - Performance measurement code
   main.rs        - Main demonstration
   lib.rs         - Library exports
@@ -187,7 +203,13 @@ src/
 examples/
   run_benchmarks.rs   - Full benchmark suite
   graphviz_export.rs  - Visual graph generation
+  explain_goal.rs     - Provenance explanation DOT export
   simple_demo.rs      - Minimal working example
+  scenarios/          - Example .facts scenario files
+
+tests/
+  incremental_correctness.rs
+  local_privilege_escalation.rs
 
 paper/
   main.tex       - LaTeX research paper
