@@ -261,6 +261,224 @@ pub fn generate_star_network(
     )
 }
 
+#[derive(Debug, Clone)]
+pub struct EnterpriseScenarioConfig {
+    pub number_of_web_servers: usize,
+    pub number_of_app_servers: usize,
+    pub number_of_db_servers: usize,
+    pub number_of_admin_servers: usize,
+    pub vulnerability_density: f64,
+    pub web_services: Vec<String>,
+    pub app_services: Vec<String>,
+    pub db_services: Vec<String>,
+    pub admin_services: Vec<String>,
+}
+
+impl Default for EnterpriseScenarioConfig {
+    fn default() -> Self {
+        Self {
+            number_of_web_servers: 8,
+            number_of_app_servers: 6,
+            number_of_db_servers: 3,
+            number_of_admin_servers: 1,
+            vulnerability_density: 0.75,
+            web_services: vec!["https".to_string()],
+            app_services: vec!["http".to_string()],
+            db_services: vec!["postgres".to_string()],
+            admin_services: vec!["smb".to_string()],
+        }
+    }
+}
+
+impl EnterpriseScenarioConfig {
+    pub fn number_of_nodes(&self) -> usize {
+        1 + self.number_of_web_servers
+            + self.number_of_app_servers
+            + self.number_of_db_servers
+            + self.number_of_admin_servers
+    }
+
+    fn normalized_vulnerability_density(&self) -> f64 {
+        self.vulnerability_density.clamp(0.0, 1.0)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseScenario {
+    pub network_access: Vec<NetworkAccessRule>,
+    pub vulnerabilities: Vec<VulnerabilityRecord>,
+    pub firewall_rules: Vec<FirewallRuleRecord>,
+    pub attacker_positions: Vec<AttackerStartingPosition>,
+    pub attacker_goals: Vec<AttackerTargetGoal>,
+}
+
+impl EnterpriseScenario {
+    pub fn number_of_nodes(&self) -> usize {
+        let mut hosts = std::collections::BTreeSet::new();
+
+        for access in &self.network_access {
+            hosts.insert(access.source_host.clone());
+            hosts.insert(access.destination_host.clone());
+        }
+        for vulnerability in &self.vulnerabilities {
+            hosts.insert(vulnerability.host_name.clone());
+        }
+        for position in &self.attacker_positions {
+            hosts.insert(position.starting_host.clone());
+        }
+        for goal in &self.attacker_goals {
+            hosts.insert(goal.target_host_name.clone());
+        }
+
+        hosts.len()
+    }
+}
+
+pub fn generate_layered_enterprise_network(config: EnterpriseScenarioConfig) -> EnterpriseScenario {
+    let web_hosts = layer_hosts("web", config.number_of_web_servers);
+    let app_hosts = layer_hosts("app", config.number_of_app_servers);
+    let db_hosts = layer_hosts("db", config.number_of_db_servers);
+    let admin_hosts = layer_hosts("admin", config.number_of_admin_servers);
+
+    let mut network_access = Vec::new();
+    add_layer_edges(
+        &mut network_access,
+        &["internet".to_string()],
+        &web_hosts,
+        &config.web_services,
+    );
+    add_layer_edges(
+        &mut network_access,
+        &web_hosts,
+        &app_hosts,
+        &config.app_services,
+    );
+    add_layer_edges(
+        &mut network_access,
+        &app_hosts,
+        &db_hosts,
+        &config.db_services,
+    );
+    add_layer_edges(
+        &mut network_access,
+        &db_hosts,
+        &admin_hosts,
+        &config.admin_services,
+    );
+
+    let density = config.normalized_vulnerability_density();
+    let mut vulnerabilities = Vec::new();
+    add_layer_vulnerabilities(
+        &mut vulnerabilities,
+        "WEB",
+        &web_hosts,
+        &config.web_services,
+        PrivilegeLevel::User,
+        density,
+    );
+    add_layer_vulnerabilities(
+        &mut vulnerabilities,
+        "APP",
+        &app_hosts,
+        &config.app_services,
+        PrivilegeLevel::User,
+        density,
+    );
+    add_layer_vulnerabilities(
+        &mut vulnerabilities,
+        "DB",
+        &db_hosts,
+        &config.db_services,
+        PrivilegeLevel::User,
+        density,
+    );
+    add_layer_vulnerabilities(
+        &mut vulnerabilities,
+        "ADMIN",
+        &admin_hosts,
+        &config.admin_services,
+        PrivilegeLevel::Root,
+        density,
+    );
+
+    let attacker_positions = vec![AttackerStartingPosition::new(
+        "attacker",
+        "internet",
+        PrivilegeLevel::User,
+    )];
+    let attacker_goals = vec![AttackerTargetGoal::new(
+        "attacker",
+        admin_hosts.first().map(String::as_str).unwrap_or("admin_0"),
+    )];
+
+    EnterpriseScenario {
+        network_access,
+        vulnerabilities,
+        firewall_rules: Vec::new(),
+        attacker_positions,
+        attacker_goals,
+    }
+}
+
+fn layer_hosts(layer_name: &str, count: usize) -> Vec<String> {
+    (0..count)
+        .map(|index| format!("{layer_name}_{index}"))
+        .collect()
+}
+
+fn add_layer_edges(
+    network_access: &mut Vec<NetworkAccessRule>,
+    sources: &[String],
+    destinations: &[String],
+    services: &[String],
+) {
+    for source in sources {
+        for destination in destinations {
+            for service in services {
+                network_access.push(NetworkAccessRule::new(source, destination, service));
+            }
+        }
+    }
+}
+
+fn add_layer_vulnerabilities(
+    vulnerabilities: &mut Vec<VulnerabilityRecord>,
+    layer_label: &str,
+    hosts: &[String],
+    services: &[String],
+    privilege: PrivilegeLevel,
+    density: f64,
+) {
+    for (host_index, host) in hosts.iter().enumerate() {
+        for (service_index, service) in services.iter().enumerate() {
+            if should_include_enterprise_vulnerability(host_index, service_index, density) {
+                vulnerabilities.push(VulnerabilityRecord::new(
+                    host,
+                    &format!("CVE-ENTERPRISE-{layer_label}-{host_index}-{service_index}"),
+                    service,
+                    privilege.clone(),
+                ));
+            }
+        }
+    }
+}
+
+fn should_include_enterprise_vulnerability(
+    host_index: usize,
+    service_index: usize,
+    density: f64,
+) -> bool {
+    if density <= 0.0 {
+        return host_index == 0 && service_index == 0;
+    }
+    if density >= 1.0 || (host_index == 0 && service_index == 0) {
+        return true;
+    }
+
+    let deterministic_score = ((host_index * 37 + service_index * 17 + 11) % 100) as f64 / 100.0;
+    deterministic_score < density
+}
+
 // ----------------------------------------------------------------
 // Benchmarks that execute the dataflow
 // ----------------------------------------------------------------
@@ -1133,5 +1351,56 @@ mod tests {
         assert_eq!(vulns.len(), 11); // 10 leaves + 1 hub
         assert_eq!(positions.len(), 1);
         assert_eq!(goals.len(), 1);
+    }
+
+    #[test]
+    fn test_layered_enterprise_generation() {
+        let config = EnterpriseScenarioConfig {
+            number_of_web_servers: 2,
+            number_of_app_servers: 3,
+            number_of_db_servers: 2,
+            number_of_admin_servers: 1,
+            vulnerability_density: 1.0,
+            web_services: vec!["https".to_string(), "http".to_string()],
+            app_services: vec!["api".to_string()],
+            db_services: vec!["postgres".to_string()],
+            admin_services: vec!["smb".to_string()],
+        };
+
+        let scenario = generate_layered_enterprise_network(config);
+
+        assert_eq!(scenario.number_of_nodes(), 9);
+        assert_eq!(scenario.network_access.len(), 4 + 6 + 6 + 2);
+        assert_eq!(scenario.vulnerabilities.len(), 4 + 3 + 2 + 1);
+        assert_eq!(scenario.firewall_rules.len(), 0);
+        assert_eq!(scenario.attacker_positions.len(), 1);
+        assert_eq!(scenario.attacker_positions[0].starting_host, "internet");
+        assert_eq!(scenario.attacker_goals.len(), 1);
+        assert_eq!(scenario.attacker_goals[0].target_host_name, "admin_0");
+    }
+
+    #[test]
+    fn test_layered_enterprise_generation_keeps_one_path_at_zero_density() {
+        let scenario = generate_layered_enterprise_network(EnterpriseScenarioConfig {
+            vulnerability_density: 0.0,
+            ..EnterpriseScenarioConfig::default()
+        });
+
+        assert!(scenario
+            .vulnerabilities
+            .iter()
+            .any(|vulnerability| vulnerability.host_name == "web_0"));
+        assert!(scenario
+            .vulnerabilities
+            .iter()
+            .any(|vulnerability| vulnerability.host_name == "app_0"));
+        assert!(scenario
+            .vulnerabilities
+            .iter()
+            .any(|vulnerability| vulnerability.host_name == "db_0"));
+        assert!(scenario
+            .vulnerabilities
+            .iter()
+            .any(|vulnerability| vulnerability.host_name == "admin_0"));
     }
 }
