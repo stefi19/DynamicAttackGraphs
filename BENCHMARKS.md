@@ -13,10 +13,29 @@ We evaluate three network topologies to demonstrate different aspects of increme
 All benchmarks compare:
 - **Initial computation**: Building the attack graph from scratch
 - **Incremental update**: Updating after a small change (patching one vulnerability)
+- **Full recomputation after update**: Rebuilding a fresh dataflow from the updated base facts
+
+## Recompute Baseline Methodology
+
+The correct baseline for an incremental update is not the first initial build.
+After applying a change, the baseline must rebuild the attack graph from scratch
+using the updated facts. This measures what a non-incremental implementation
+would pay to produce the same post-update result.
+
+The benchmark code now reports two speedup values:
+
+- **Initial speedup** = initial computation time / incremental update time
+- **Recompute speedup** = full recomputation after update / incremental update time
+
+The recompute speedup is the research-relevant comparison for update handling.
+It shows whether Differential Dataflow avoids work relative to recomputing the
+post-update attack graph from a clean dataflow state. The current benchmark
+demonstrates this for star, chain, and random-cut chain scenarios while keeping
+the original initial and incremental timings in the output.
 
 ## Test Environment
 
-- **Framework**: differential-dataflow v0.12 + timely v0.12
+- **Framework**: differential-dataflow v0.13 + timely v0.13
 - **Language**: Rust (release mode, optimized)
 - **Execution**: Single-threaded (`execute_directly`)
 
