@@ -79,31 +79,55 @@ Phase 2 (Rederive):
 ```
 
 Problems:
-- May do redundant work (delete then re-derive the same fact)
-- Works well only when deletions don't cascade far
+- It deliberately overdeletes. Any fact that may depend on a removed fact is
+  removed, even if it also has an independent proof.
+- It may then rederive the same fact during the second phase.
+- The redundant work can be large when deletions affect a dense or recursive
+  region of the materialisation.
 
 ### Backward/Forward (B/F) Algorithm
 
-B/F is more sophisticated:
+B/F is more selective than DRed. In the Motik et al. algorithm, deletion
+handling uses backward chaining to ask whether a threatened fact still has an
+alternative proof, and forward chaining to propagate consequences where no
+alternative proof exists.
 
 ```
-For each derived fact, keep a COUNT of how many ways it can be derived
-
 When a base fact is deleted:
-  Decrement counts of affected facts
-  Only delete facts where count reaches 0
+  Identify facts whose known derivation may be invalid
+  Use backward chaining to search for alternate proofs
+  Use forward chaining to propagate only the facts that really disappear
 ```
 
-Key insight: B/F uses derivation counts to avoid over-deletion.
+Key insight: B/F avoids DRed-style overdeletion by checking whether threatened
+facts can still be proved. It should not be described simply as a
+derivation-counting algorithm.
+
+### Derivation Counting
+
+Derivation counting is a different incremental maintenance technique. It keeps
+the number of current derivations for each fact and removes a fact only when the
+count falls to zero. This is a useful point of comparison because it also
+preserves facts with alternate derivations, but it is not the same algorithm as
+B/F.
+
+Differential Dataflow uses signed differences, or multiplicities, in its
+collections. When the accumulated multiplicity of a record is positive, the
+record is present; when it reaches zero, the record is absent. This is closer to
+implicit multiplicity tracking than to a direct implementation of B/F.
+
+This project implements MulVAL-style attack graph rules in Differential
+Dataflow. It does not directly implement DRed, B/F, or an explicit
+derivation-counting maintenance algorithm.
 
 ### Comparison
 
-| Aspect | DRed | B/F Algorithm |
-|--------|------|---------------|
-| Deletion handling | Over-delete + rederive | Count-based precise deletion |
-| Space overhead | Minimal | Requires derivation counts |
-| Redundant work | Yes | No |
-| Implementation | Simpler | More complex |
+| Aspect | DRed | B/F Algorithm | Differential Dataflow in this project |
+|--------|------|---------------|----------------------------------------|
+| Deletion handling | Over-delete + rederive | Backward proof search + forward propagation | Signed diff propagation through dataflow operators |
+| Alternate derivations | Recovered during rederivation | Checked before deleting threatened facts | Reflected through accumulated multiplicities |
+| Counting model | Not the core idea | Not simply derivation counting | Uses implicit record multiplicities |
+| Implementation in this project | Not implemented directly | Not implemented directly | Implemented rule engine |
 
 ---
 
@@ -111,7 +135,7 @@ Key insight: B/F uses derivation counts to avoid over-deletion.
 
 ### Attack Graph Characteristics
 
-Attack graphs have properties that make B/F-style updates better:
+Attack graphs have properties that make precise incremental maintenance useful:
 1. Networks are often densely connected
 2. One vulnerability enables many attack paths
 3. Frequent small updates (patches, firewall changes, new CVEs)
@@ -125,7 +149,8 @@ Current state:
 
 Our contribution:
 - Using differential dataflow as a practical implementation
-- It provides counting-based incrementality
+- It provides incremental maintenance through differential updates and
+  multiplicity arithmetic
 - It's open-source and production-ready
 - It supports streaming updates
 
@@ -146,8 +171,8 @@ Update time should be proportional to the size of changes, not the full graph.
 
 ## 5. Research Questions
 
-1. How does differential dataflow compare to DRed on attack graph workloads?
-2. What is the overhead of maintaining derivation counts for large attack graphs?
+1. Can MulVAL-style attack graph rules be expressed using Differential Dataflow operators?
+2. How much faster are incremental updates than full recomputation?
 3. Can we achieve sub-second updates for enterprise networks (10K+ hosts)?
 4. How do different update patterns affect performance?
 
