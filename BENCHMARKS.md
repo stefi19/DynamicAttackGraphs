@@ -4,11 +4,12 @@ This document presents benchmark results demonstrating the efficiency of increme
 
 ## Overview
 
-We evaluate three network topologies to demonstrate different aspects of incremental computation:
+We evaluate four network topologies to demonstrate different aspects of incremental computation:
 
 1. **Star Network** - Best case: O(1) iteration depth
 2. **Chain Network** - Worst case: O(N) iteration depth  
 3. **Chain Random Cut** - Shows position-dependent speedup
+4. **Layered Enterprise Network** - DMZ/app/database/admin layers with realistic update patterns
 
 All benchmarks compare:
 - **Initial computation**: Building the attack graph from scratch
@@ -158,6 +159,83 @@ To show that speedup depends on **where** the change occurs:
 ### Interpretation for Paper
 
 > "The random cut benchmark demonstrates that incremental update complexity is O(affected nodes), not O(total nodes). Cutting a chain at position k invalidates the (N-k) downstream nodes. On average, this yields a 2x speedup over full recomputation."
+
+---
+
+## Part 4: Layered Enterprise Network Benchmark
+
+### Topology Description
+
+```
+internet -> DMZ web servers -> app servers -> database servers -> admin/domain-controller targets
+```
+
+The layered enterprise generator models a segmented organization rather than an
+abstract graph shape. It creates adjacent-layer access only:
+
+- Internet to DMZ web servers over web services such as `https`
+- DMZ web servers to app servers over application services
+- App servers to database servers over database services such as `postgres`
+- Database servers to admin or domain-controller targets over admin services such as `smb`
+
+The default configuration creates multiple hosts per layer, assigns
+deterministic vulnerabilities according to a configurable density, starts the
+attacker at `internet`, and sets the goal to the first admin host. The generator
+keeps at least one vulnerable service per layer so that even low-density
+scenarios preserve a complete baseline attack path.
+
+### Why This Is More Realistic Than Star or Chain
+
+Star and chain topologies are useful boundary cases: star isolates shallow,
+localized updates, while chain exposes worst-case propagation depth. Real
+enterprise attack paths are usually neither pure stars nor pure chains. They
+cross trust zones, pass through service-specific chokepoints, and may have
+multiple equivalent hosts at each layer.
+
+The layered benchmark is therefore a better research scenario for evaluating
+incremental maintenance. A patch in the DMZ may invalidate many downstream app,
+database, and admin facts, while a patch in one app server may affect a smaller
+subregion. A firewall deny between the DMZ and app layer tests stratified
+negation through the firewall rule, and a batch patch models a maintenance
+window that changes several vulnerabilities at once.
+
+### Update Patterns
+
+The enterprise benchmark currently measures four update classes:
+
+- **Patch one web vulnerability**: removes one DMZ vulnerability.
+- **Patch one app vulnerability**: removes one application-layer vulnerability.
+- **Add DMZ-to-app firewall deny**: inserts a deny rule for one web-to-app service edge.
+- **Batch patch 10 percent**: removes 10 percent of the generated vulnerabilities, with a minimum of one vulnerability.
+
+Each update is measured in a fresh dataflow instance so the timing for one
+pattern is not affected by earlier patterns. For every update, the benchmark
+also runs a full recomputation from the updated base facts and reports:
+
+- Initial computation time
+- Incremental update time
+- Full recomputation time after the update
+- Speedup = full recomputation after update / incremental update
+- Derived fact counts before and after the update
+- Changed derived fact count, reported as the absolute count delta
+
+### Running From Rust
+
+The enterprise benchmark API is exposed from `src/benchmarks.rs`:
+
+```rust
+use dynamic_attack_graphs::benchmarks::{
+    print_enterprise_benchmark_table, run_enterprise_benchmark, EnterpriseScenarioConfig,
+};
+
+let results = run_enterprise_benchmark(EnterpriseScenarioConfig::default());
+print_enterprise_benchmark_table(&results);
+```
+
+The default `examples/run_benchmarks.rs` runner continues to cover the original
+star, chain, and random-cut experiments. The enterprise benchmark is available
+as a library function so research scripts can choose the host counts, service
+sets, and vulnerability density explicitly.
 
 ---
 
