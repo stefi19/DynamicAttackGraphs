@@ -1,18 +1,55 @@
 // Main entry point for the attack graph demonstration
 // Shows how the attack graph updates incrementally when facts change
 
+use std::path::PathBuf;
 use std::time::Instant;
 
+use clap::Parser;
 use differential_dataflow::input::Input;
 use timely::dataflow::operators::probe::Handle;
 
+mod parser;
 mod rules;
 mod schema;
 
 use rules::build_attack_graph;
 use schema::*;
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "attack-graph",
+    about = "Dynamic attack graph computation with Differential Dataflow"
+)]
+struct Cli {
+    /// Load base facts from a MulVAL-like .facts scenario file.
+    #[arg(long)]
+    scenario: Option<PathBuf>,
+
+    /// Apply update facts after the scenario has been loaded.
+    #[arg(long)]
+    update: Option<PathBuf>,
+
+    /// Explain a derived fact. Reserved for future work.
+    #[arg(long)]
+    explain: Option<String>,
+
+    /// Export the computed graph as Graphviz DOT. Reserved for future work.
+    #[arg(long)]
+    export_dot: Option<PathBuf>,
+}
+
 fn main() {
+    let cli = Cli::parse();
+
+    if cli.scenario.is_some() {
+        println!("Scenario execution is not implemented yet.");
+        return;
+    }
+
+    run_hardcoded_demo();
+}
+
+fn run_hardcoded_demo() {
     println!("========================================================================");
     println!("     Dynamic Attack Graphs using Differential Dataflow");
     println!("                    Proof of Concept");
