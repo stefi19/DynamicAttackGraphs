@@ -1,0 +1,8 @@
+% Remote compromise gives user access to web01; a local bug escalates to root.
+attackerLocated(eve, internet, user).
+attackGoal(eve, web01).
+
+hacl(internet, web01, https).
+
+vulExists(web01, cve_2024_web, https, user).
+localVulExists(web01, cve_2024_local, root).
