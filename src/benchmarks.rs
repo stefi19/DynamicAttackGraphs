@@ -28,10 +28,14 @@ pub struct BenchmarkResults {
     pub number_of_nodes: usize,
     pub initial_computation_time: Duration,
     pub incremental_update_time: Duration,
+    pub full_recomputation_after_update_time: Duration,
     pub speedup_factor: f64,
+    pub incremental_vs_recompute_speedup: f64,
     // simple counts useful for debugging/plots
     pub number_of_attack_paths_initial: usize,
     pub number_of_attack_paths_after_patch: usize,
+    pub derived_facts_before_update: usize,
+    pub derived_facts_after_update: usize,
 }
 
 impl BenchmarkResults {
@@ -43,12 +47,24 @@ impl BenchmarkResults {
         println!("Incremental update:  {:?}", self.incremental_update_time);
         println!("Speedup factor: {:.2}x", self.speedup_factor);
         println!(
+            "Full recomputation after update: {:?}",
+            self.full_recomputation_after_update_time
+        );
+        println!(
+            "Incremental vs recompute speedup: {:.2}x",
+            self.incremental_vs_recompute_speedup
+        );
+        println!(
             "Attack paths (initial): {}",
             self.number_of_attack_paths_initial
         );
         println!(
             "Attack paths (after patch): {}",
             self.number_of_attack_paths_after_patch
+        );
+        println!(
+            "Derived facts: {} before update, {} after update",
+            self.derived_facts_before_update, self.derived_facts_after_update
         );
         println!();
     }
@@ -383,6 +399,19 @@ pub fn measure_full_recomputation(
     })
 }
 
+fn vulnerability_matches(
+    vulnerability: &VulnerabilityRecord,
+    host_name: &str,
+    vulnerability_id: &str,
+    affected_service: &str,
+    privilege_gained_on_exploit: PrivilegeLevel,
+) -> bool {
+    vulnerability.host_name == host_name
+        && vulnerability.vulnerability_id == vulnerability_id
+        && vulnerability.affected_service == affected_service
+        && vulnerability.privilege_gained_on_exploit == privilege_gained_on_exploit
+}
+
 // Run the chain benchmark: measure initial build time and the time
 // to perform a single incremental patch (remove vulnerability at
 // node_1).  The timings are returned in a `BenchmarkResults` struct.
@@ -392,6 +421,35 @@ pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
 
     let (network_topology, vulnerabilities, attacker_positions, attacker_goals) =
         generate_chain_network(number_of_nodes);
+    let firewall_rules: Vec<FirewallRuleRecord> = Vec::new();
+
+    let initial_recomputation = measure_full_recomputation(
+        &network_topology,
+        &vulnerabilities,
+        &firewall_rules,
+        &attacker_positions,
+        &attacker_goals,
+    );
+    let vulnerabilities_after_patch: Vec<_> = vulnerabilities
+        .iter()
+        .filter(|vulnerability| {
+            !vulnerability_matches(
+                vulnerability,
+                "node_1",
+                "CVE-CHAIN-1",
+                "ssh",
+                PrivilegeLevel::Root,
+            )
+        })
+        .cloned()
+        .collect();
+    let recomputation_after_update = measure_full_recomputation(
+        &network_topology,
+        &vulnerabilities_after_patch,
+        &firewall_rules,
+        &attacker_positions,
+        &attacker_goals,
+    );
 
     // We use atomic/u64s to capture timings inside the timely worker
     // closure because `execute_directly` takes ownership and runs on
@@ -532,14 +590,23 @@ pub fn run_chain_benchmark(number_of_nodes: usize) -> BenchmarkResults {
     } else {
         f64::INFINITY
     };
+    let incremental_vs_recompute_speedup = if incremental_time.as_nanos() > 0 {
+        recomputation_after_update.computation_time.as_secs_f64() / incremental_time.as_secs_f64()
+    } else {
+        f64::INFINITY
+    };
 
     BenchmarkResults {
         number_of_nodes,
         initial_computation_time: initial_time,
         incremental_update_time: incremental_time,
+        full_recomputation_after_update_time: recomputation_after_update.computation_time,
         speedup_factor: speedup,
+        incremental_vs_recompute_speedup,
         number_of_attack_paths_initial: number_of_nodes,
         number_of_attack_paths_after_patch: 1,
+        derived_facts_before_update: initial_recomputation.derived_fact_count,
+        derived_facts_after_update: recomputation_after_update.derived_fact_count,
     }
 }
 
@@ -565,9 +632,11 @@ pub struct RandomCutBenchmarkResults {
     pub number_of_iterations: usize,
     pub initial_computation_time: Duration,
     pub average_incremental_time: Duration,
+    pub average_full_recomputation_after_update_time: Duration,
     pub min_incremental_time: Duration,
     pub max_incremental_time: Duration,
     pub average_speedup: f64,
+    pub average_incremental_vs_recompute_speedup: f64,
 }
 
 pub fn run_chain_random_cut_benchmark(
@@ -581,6 +650,11 @@ pub fn run_chain_random_cut_benchmark(
     let (network_topology, vulnerabilities, attacker_positions, attacker_goals) =
         generate_chain_network(number_of_nodes);
 
+    let mut rng = rand::thread_rng();
+    let cut_positions: Vec<usize> = (0..iterations)
+        .map(|_| rng.gen_range(0..number_of_nodes))
+        .collect();
+
     // Storage for timing data across iterations
     let initial_nanos = Arc::new(AtomicU64::new(0));
     let incremental_times_nanos = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -588,6 +662,11 @@ pub fn run_chain_random_cut_benchmark(
     let times_clone = Arc::clone(&incremental_times_nanos);
 
     let iterations_count = iterations;
+    let dataflow_network_topology = network_topology.clone();
+    let dataflow_vulnerabilities = vulnerabilities.clone();
+    let dataflow_attacker_positions = attacker_positions.clone();
+    let dataflow_attacker_goals = attacker_goals.clone();
+    let dataflow_cut_positions = cut_positions.clone();
 
     timely::execute_directly(move |worker| {
         let mut probe = Handle::new();
@@ -632,16 +711,16 @@ pub fn run_chain_random_cut_benchmark(
         // Phase 1: initial computation (identical to the single-shot benchmark)
         let start_initial = Instant::now();
 
-        for network_rule in &network_topology {
+        for network_rule in &dataflow_network_topology {
             network_input.insert(network_rule.clone());
         }
-        for vulnerability in &vulnerabilities {
+        for vulnerability in &dataflow_vulnerabilities {
             vulnerability_input.insert(vulnerability.clone());
         }
-        for position in &attacker_positions {
+        for position in &dataflow_attacker_positions {
             attacker_position_input.insert(position.clone());
         }
-        for goal in &attacker_goals {
+        for goal in &dataflow_attacker_goals {
             attacker_goal_input.insert(goal.clone());
         }
 
@@ -664,14 +743,13 @@ pub fn run_chain_random_cut_benchmark(
         initial_clone.store(initial_elapsed.as_nanos() as u64, Ordering::SeqCst);
 
         // Phase 2: Multiple random cut tests
-        let mut rng = rand::thread_rng();
         let mut times_vec = times_clone.lock().unwrap();
 
         for i in 0..iterations_count {
             let time_step = 2 + (i * 2); // Each iteration uses 2 time steps
 
-            // Pick a random node k between 0 and number_of_nodes - 1
-            let k = rng.gen_range(0..number_of_nodes);
+            // Use the same sampled cuts for incremental and recompute timing.
+            let k = dataflow_cut_positions[i];
             let node_name = format!("node_{}", k);
             let cve_name = format!("CVE-CHAIN-{}", k);
 
@@ -730,6 +808,35 @@ pub fn run_chain_random_cut_benchmark(
 
     let initial_time = Duration::from_nanos(initial_nanos.load(Ordering::SeqCst));
     let times = incremental_times_nanos.lock().unwrap();
+    let firewall_rules: Vec<FirewallRuleRecord> = Vec::new();
+    let recomputation_times_nanos: Vec<u64> = cut_positions
+        .iter()
+        .map(|k| {
+            let patched_vulnerabilities: Vec<_> = vulnerabilities
+                .iter()
+                .filter(|vulnerability| {
+                    !vulnerability_matches(
+                        vulnerability,
+                        &format!("node_{}", k),
+                        &format!("CVE-CHAIN-{}", k),
+                        "ssh",
+                        PrivilegeLevel::Root,
+                    )
+                })
+                .cloned()
+                .collect();
+
+            measure_full_recomputation(
+                &network_topology,
+                &patched_vulnerabilities,
+                &firewall_rules,
+                &attacker_positions,
+                &attacker_goals,
+            )
+            .computation_time
+            .as_nanos() as u64
+        })
+        .collect();
 
     let min_nanos = *times.iter().min().unwrap_or(&0);
     let max_nanos = *times.iter().max().unwrap_or(&0);
@@ -740,8 +847,19 @@ pub fn run_chain_random_cut_benchmark(
     };
 
     let avg_incremental = Duration::from_nanos(avg_nanos);
+    let avg_recompute_nanos = if recomputation_times_nanos.is_empty() {
+        0
+    } else {
+        recomputation_times_nanos.iter().sum::<u64>() / recomputation_times_nanos.len() as u64
+    };
+    let avg_recompute = Duration::from_nanos(avg_recompute_nanos);
     let average_speedup = if avg_nanos > 0 {
         initial_time.as_secs_f64() / avg_incremental.as_secs_f64()
+    } else {
+        f64::INFINITY
+    };
+    let average_incremental_vs_recompute_speedup = if avg_nanos > 0 {
+        avg_recompute.as_secs_f64() / avg_incremental.as_secs_f64()
     } else {
         f64::INFINITY
     };
@@ -751,30 +869,37 @@ pub fn run_chain_random_cut_benchmark(
         number_of_iterations: iterations,
         initial_computation_time: initial_time,
         average_incremental_time: avg_incremental,
+        average_full_recomputation_after_update_time: avg_recompute,
         min_incremental_time: Duration::from_nanos(min_nanos),
         max_incremental_time: Duration::from_nanos(max_nanos),
         average_speedup,
+        average_incremental_vs_recompute_speedup,
     }
 }
 
 // Print results table for random cut benchmark
 pub fn print_random_cut_benchmark_table(results: &[RandomCutBenchmarkResults]) {
     println!(
-        "| Nodes | Iterations | Initial (ms) | Avg Incr (us) | Min (us) | Max (us) | Avg Speedup |"
+        "| Nodes | Iterations | Initial (ms) | Avg Incr (us) | Avg Recompute (ms) | Min (us) | Max (us) | Avg Speedup | Recompute Speedup |"
     );
     println!(
-        "|-------|------------|--------------|---------------|----------|----------|-------------|"
+        "|-------|------------|--------------|---------------|--------------------|----------|----------|-------------|-------------------|"
     );
     for result in results {
         println!(
-            "| {:>5} | {:>10} | {:>12.2} | {:>13.2} | {:>8.2} | {:>8.2} | {:>11.1}x |",
+            "| {:>5} | {:>10} | {:>12.2} | {:>13.2} | {:>18.2} | {:>8.2} | {:>8.2} | {:>11.1}x | {:>17.1}x |",
             result.number_of_nodes,
             result.number_of_iterations,
             result.initial_computation_time.as_secs_f64() * 1000.0,
             result.average_incremental_time.as_secs_f64() * 1_000_000.0,
+            result
+                .average_full_recomputation_after_update_time
+                .as_secs_f64()
+                * 1000.0,
             result.min_incremental_time.as_secs_f64() * 1_000_000.0,
             result.max_incremental_time.as_secs_f64() * 1_000_000.0,
             result.average_speedup,
+            result.average_incremental_vs_recompute_speedup,
         );
     }
 }
@@ -788,6 +913,35 @@ pub fn run_star_benchmark(number_of_leaves: usize) -> BenchmarkResults {
         generate_star_network(number_of_leaves);
 
     let total_nodes = number_of_leaves + 1; // leaves + hub
+    let firewall_rules: Vec<FirewallRuleRecord> = Vec::new();
+
+    let initial_recomputation = measure_full_recomputation(
+        &network_topology,
+        &vulnerabilities,
+        &firewall_rules,
+        &attacker_positions,
+        &attacker_goals,
+    );
+    let vulnerabilities_after_patch: Vec<_> = vulnerabilities
+        .iter()
+        .filter(|vulnerability| {
+            !vulnerability_matches(
+                vulnerability,
+                "leaf_0",
+                "CVE-LEAF-0",
+                "ssh",
+                PrivilegeLevel::Root,
+            )
+        })
+        .cloned()
+        .collect();
+    let recomputation_after_update = measure_full_recomputation(
+        &network_topology,
+        &vulnerabilities_after_patch,
+        &firewall_rules,
+        &attacker_positions,
+        &attacker_goals,
+    );
 
     // Use atomics to share timing data (thread-safe)
     let initial_nanos = Arc::new(AtomicU64::new(0));
@@ -906,28 +1060,45 @@ pub fn run_star_benchmark(number_of_leaves: usize) -> BenchmarkResults {
     } else {
         f64::INFINITY
     };
+    let incremental_vs_recompute_speedup = if incremental_time.as_nanos() > 0 {
+        recomputation_after_update.computation_time.as_secs_f64() / incremental_time.as_secs_f64()
+    } else {
+        f64::INFINITY
+    };
 
     BenchmarkResults {
         number_of_nodes: total_nodes,
         initial_computation_time: initial_time,
         incremental_update_time: incremental_time,
+        full_recomputation_after_update_time: recomputation_after_update.computation_time,
         speedup_factor: speedup,
+        incremental_vs_recompute_speedup,
         number_of_attack_paths_initial: total_nodes,
         number_of_attack_paths_after_patch: total_nodes - 1,
+        derived_facts_before_update: initial_recomputation.derived_fact_count,
+        derived_facts_after_update: recomputation_after_update.derived_fact_count,
     }
 }
 
 // Print a table of benchmark results suitable for a paper
 pub fn print_benchmark_table(results: &[BenchmarkResults]) {
-    println!("| Nodes | Initial (ms) | Incremental (us) | Speedup |");
-    println!("|-------|--------------|------------------|---------|");
+    println!(
+        "| Nodes | Initial (ms) | Incremental (us) | Recompute After Update (ms) | Initial Speedup | Recompute Speedup | Facts Before | Facts After |"
+    );
+    println!(
+        "|-------|--------------|------------------|-----------------------------|-----------------|-------------------|--------------|-------------|"
+    );
     for result in results {
         println!(
-            "| {:>5} | {:>12.2} | {:>16.2} | {:>7.1}x |",
+            "| {:>5} | {:>12.2} | {:>16.2} | {:>27.2} | {:>15.1}x | {:>17.1}x | {:>12} | {:>11} |",
             result.number_of_nodes,
             result.initial_computation_time.as_secs_f64() * 1000.0,
             result.incremental_update_time.as_secs_f64() * 1_000_000.0,
+            result.full_recomputation_after_update_time.as_secs_f64() * 1000.0,
             result.speedup_factor,
+            result.incremental_vs_recompute_speedup,
+            result.derived_facts_before_update,
+            result.derived_facts_after_update,
         );
     }
 }
