@@ -45,6 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let explainer = Explainer::new(
         ProvenanceBaseFacts {
             vulnerabilities,
+            local_vulnerabilities: Vec::new(),
             network_access,
             firewall_rules,
             attacker_positions,

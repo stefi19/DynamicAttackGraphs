@@ -5,8 +5,8 @@ use std::path::Path;
 
 use crate::schema::{
     AttackerCodeExecution, AttackerGoalReached, AttackerOwnsMachine, AttackerStartingPosition,
-    AttackerTargetGoal, EffectiveNetworkAccess, FirewallRuleRecord, NetworkAccessRule,
-    PrivilegeLevel, VulnerabilityRecord,
+    AttackerTargetGoal, EffectiveNetworkAccess, FirewallRuleRecord, LocalVulnerabilityRecord,
+    NetworkAccessRule, PrivilegeLevel, VulnerabilityRecord,
 };
 
 /// Canonical fact representation used by the explanation layer.
@@ -20,6 +20,11 @@ pub enum Fact {
         host: String,
         vulnerability_id: String,
         service: String,
+        privilege: PrivilegeLevel,
+    },
+    LocalVulExists {
+        host: String,
+        vulnerability_id: String,
         privilege: PrivilegeLevel,
     },
     Hacl {
@@ -235,6 +240,16 @@ impl From<&VulnerabilityRecord> for Fact {
     }
 }
 
+impl From<&LocalVulnerabilityRecord> for Fact {
+    fn from(record: &LocalVulnerabilityRecord) -> Self {
+        Fact::LocalVulExists {
+            host: record.host_name.clone(),
+            vulnerability_id: record.vulnerability_id.clone(),
+            privilege: record.privilege_gained_on_exploit.clone(),
+        }
+    }
+}
+
 impl From<&NetworkAccessRule> for Fact {
     fn from(record: &NetworkAccessRule) -> Self {
         Fact::Hacl {
@@ -324,6 +339,14 @@ impl fmt::Display for Fact {
                 formatter,
                 "vulExists({host}, {vulnerability_id}, {service}, {privilege})"
             ),
+            Fact::LocalVulExists {
+                host,
+                vulnerability_id,
+                privilege,
+            } => write!(
+                formatter,
+                "localVulExists({host}, {vulnerability_id}, {privilege})"
+            ),
             Fact::Hacl {
                 source,
                 destination,
@@ -377,6 +400,7 @@ impl fmt::Display for Fact {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProvenanceBaseFacts {
     pub vulnerabilities: Vec<VulnerabilityRecord>,
+    pub local_vulnerabilities: Vec<LocalVulnerabilityRecord>,
     pub network_access: Vec<NetworkAccessRule>,
     pub firewall_rules: Vec<FirewallRuleRecord>,
     pub attacker_positions: Vec<AttackerStartingPosition>,
@@ -388,6 +412,7 @@ impl ProvenanceBaseFacts {
         let mut facts = HashSet::new();
 
         facts.extend(self.vulnerabilities.iter().map(Fact::from));
+        facts.extend(self.local_vulnerabilities.iter().map(Fact::from));
         facts.extend(self.network_access.iter().map(Fact::from));
         facts.extend(self.firewall_rules.iter().map(Fact::from));
         facts.extend(self.attacker_positions.iter().map(Fact::from));
@@ -699,6 +724,7 @@ mod tests {
                 VulnerabilityRecord::new("db01", "CVE-2024-DB", "postgres", PrivilegeLevel::Root),
                 VulnerabilityRecord::new("admin01", "CVE-2024-8888", "smb", PrivilegeLevel::Root),
             ],
+            local_vulnerabilities: Vec::new(),
             network_access: vec![
                 NetworkAccessRule::new("internet", "db01", "postgres"),
                 NetworkAccessRule::new("db01", "admin01", "smb"),
@@ -792,6 +818,7 @@ mod tests {
     fn refuses_effective_access_when_firewall_deny_exists() {
         let base_facts = ProvenanceBaseFacts {
             vulnerabilities: Vec::new(),
+            local_vulnerabilities: Vec::new(),
             network_access: vec![NetworkAccessRule::new("internet", "web01", "https")],
             firewall_rules: vec![FirewallRuleRecord::create_deny_rule(
                 "internet", "web01", "https",
