@@ -280,6 +280,29 @@ cargo build --release
 cargo run --release --example run_benchmarks
 ```
 
+To also write paper-ready CSV output:
+
+```bash
+cargo run --release --example run_benchmarks -- --csv results.csv
+```
+
+The CSV file contains one row per benchmark configuration or averaged update
+pattern. The exported columns are:
+
+- `benchmark_name`: benchmark runner that produced the row
+- `topology`: star, chain, random-cut chain, or layered enterprise
+- `number_of_nodes`: total modeled hosts, including the attacker entry host when applicable
+- `number_of_edges`: generated network-access edges
+- `number_of_vulnerabilities`: generated vulnerability facts
+- `update_type`: patch, firewall-deny, batch-patch, or averaged random-cut update
+- `initial_time_ms`: initial dataflow computation time in milliseconds
+- `incremental_update_us`: incremental update time in microseconds
+- `full_recomputation_ms`: from-scratch recomputation time after applying the same update
+- `speedup`: full recomputation after update divided by incremental update time
+- `derived_facts_before`: derived fact count before the update, when collected
+- `derived_facts_after`: derived fact count after the update, when collected
+- `changed_facts`: absolute derived fact count delta when available
+
 The benchmark code is in:
 - `src/benchmarks.rs` - Benchmark implementations
 - `examples/run_benchmarks.rs` - Benchmark runner
