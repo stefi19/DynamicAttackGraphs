@@ -7,6 +7,7 @@
 // incremental update (e.g. patching a vulnerability).  The
 // measurements form the empirical evidence used in the paper.
 
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 use differential_dataflow::input::Input;
@@ -67,6 +68,164 @@ impl BenchmarkResults {
             self.derived_facts_before_update, self.derived_facts_after_update
         );
         println!();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BenchmarkCsvRow {
+    pub benchmark_name: String,
+    pub topology: String,
+    pub number_of_nodes: usize,
+    pub number_of_edges: usize,
+    pub number_of_vulnerabilities: usize,
+    pub update_type: String,
+    pub initial_time_ms: f64,
+    pub incremental_update_us: f64,
+    pub full_recomputation_ms: f64,
+    pub speedup: f64,
+    pub derived_facts_before: usize,
+    pub derived_facts_after: usize,
+    pub changed_facts: Option<usize>,
+}
+
+impl BenchmarkCsvRow {
+    pub fn from_star(number_of_leaves: usize, result: &BenchmarkResults) -> Self {
+        Self::from_basic_result(
+            "star_benchmark",
+            "star",
+            number_of_leaves + 1,
+            number_of_leaves,
+            number_of_leaves + 1,
+            "patch_one_leaf_vulnerability",
+            result,
+        )
+    }
+
+    pub fn from_chain(result: &BenchmarkResults) -> Self {
+        Self::from_basic_result(
+            "chain_benchmark",
+            "chain",
+            result.number_of_nodes,
+            result.number_of_nodes.saturating_sub(1),
+            result.number_of_nodes,
+            "patch_node_1_vulnerability",
+            result,
+        )
+    }
+
+    pub fn from_random_cut(number_of_nodes: usize, result: &RandomCutBenchmarkResults) -> Self {
+        Self {
+            benchmark_name: "chain_random_cut_benchmark".to_string(),
+            topology: "chain_random_cut".to_string(),
+            number_of_nodes,
+            number_of_edges: number_of_nodes.saturating_sub(1),
+            number_of_vulnerabilities: number_of_nodes,
+            update_type: "random_vulnerability_cut_average".to_string(),
+            initial_time_ms: duration_to_ms(result.initial_computation_time),
+            incremental_update_us: duration_to_us(result.average_incremental_time),
+            full_recomputation_ms: duration_to_ms(
+                result.average_full_recomputation_after_update_time,
+            ),
+            speedup: result.average_incremental_vs_recompute_speedup,
+            derived_facts_before: 0,
+            derived_facts_after: 0,
+            changed_facts: None,
+        }
+    }
+
+    pub fn from_enterprise(result: &EnterpriseBenchmarkResults) -> Self {
+        Self {
+            benchmark_name: "enterprise_benchmark".to_string(),
+            topology: "layered_enterprise".to_string(),
+            number_of_nodes: result.number_of_nodes,
+            number_of_edges: result.number_of_edges,
+            number_of_vulnerabilities: result.number_of_vulnerabilities,
+            update_type: result.update_pattern.label().to_string(),
+            initial_time_ms: duration_to_ms(result.initial_computation_time),
+            incremental_update_us: duration_to_us(result.incremental_update_time),
+            full_recomputation_ms: duration_to_ms(result.full_recomputation_after_update_time),
+            speedup: result.incremental_vs_recompute_speedup,
+            derived_facts_before: result.derived_facts_before_update,
+            derived_facts_after: result.derived_facts_after_update,
+            changed_facts: Some(result.changed_derived_facts),
+        }
+    }
+
+    fn from_basic_result(
+        benchmark_name: &str,
+        topology: &str,
+        number_of_nodes: usize,
+        number_of_edges: usize,
+        number_of_vulnerabilities: usize,
+        update_type: &str,
+        result: &BenchmarkResults,
+    ) -> Self {
+        Self {
+            benchmark_name: benchmark_name.to_string(),
+            topology: topology.to_string(),
+            number_of_nodes,
+            number_of_edges,
+            number_of_vulnerabilities,
+            update_type: update_type.to_string(),
+            initial_time_ms: duration_to_ms(result.initial_computation_time),
+            incremental_update_us: duration_to_us(result.incremental_update_time),
+            full_recomputation_ms: duration_to_ms(result.full_recomputation_after_update_time),
+            speedup: result.incremental_vs_recompute_speedup,
+            derived_facts_before: result.derived_facts_before_update,
+            derived_facts_after: result.derived_facts_after_update,
+            changed_facts: Some(
+                result
+                    .derived_facts_before_update
+                    .abs_diff(result.derived_facts_after_update),
+            ),
+        }
+    }
+}
+
+pub fn write_benchmark_csv<W: Write>(writer: &mut W, rows: &[BenchmarkCsvRow]) -> io::Result<()> {
+    writeln!(
+        writer,
+        "benchmark_name,topology,number_of_nodes,number_of_edges,number_of_vulnerabilities,update_type,initial_time_ms,incremental_update_us,full_recomputation_ms,speedup,derived_facts_before,derived_facts_after,changed_facts"
+    )?;
+
+    for row in rows {
+        writeln!(
+            writer,
+            "{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{},{},{}",
+            escape_csv_field(&row.benchmark_name),
+            escape_csv_field(&row.topology),
+            row.number_of_nodes,
+            row.number_of_edges,
+            row.number_of_vulnerabilities,
+            escape_csv_field(&row.update_type),
+            row.initial_time_ms,
+            row.incremental_update_us,
+            row.full_recomputation_ms,
+            row.speedup,
+            row.derived_facts_before,
+            row.derived_facts_after,
+            row.changed_facts
+                .map(|count| count.to_string())
+                .unwrap_or_default()
+        )?;
+    }
+
+    Ok(())
+}
+
+fn duration_to_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
+
+fn duration_to_us(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1_000_000.0
+}
+
+fn escape_csv_field(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
     }
 }
 
@@ -1825,5 +1984,32 @@ mod tests {
             scenario.vulnerabilities.len() - expected_patch_count
         );
         assert_eq!(update.changed_base_fact_count(), expected_patch_count);
+    }
+
+    #[test]
+    fn test_benchmark_csv_writer_outputs_header_and_rows() {
+        let rows = vec![BenchmarkCsvRow {
+            benchmark_name: "example,benchmark".to_string(),
+            topology: "chain".to_string(),
+            number_of_nodes: 3,
+            number_of_edges: 2,
+            number_of_vulnerabilities: 3,
+            update_type: "patch".to_string(),
+            initial_time_ms: 1.25,
+            incremental_update_us: 42.0,
+            full_recomputation_ms: 1.0,
+            speedup: 23.8,
+            derived_facts_before: 9,
+            derived_facts_after: 4,
+            changed_facts: Some(5),
+        }];
+        let mut output = Vec::new();
+
+        write_benchmark_csv(&mut output, &rows).unwrap();
+        let csv = String::from_utf8(output).unwrap();
+
+        assert!(csv.starts_with("benchmark_name,topology,number_of_nodes"));
+        assert!(csv.contains("\"example,benchmark\",chain,3,2,3,patch"));
+        assert!(csv.contains(",9,4,5\n"));
     }
 }
