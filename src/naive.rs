@@ -124,3 +124,154 @@ pub fn evaluate_attack_graph_naive(
         goals_reached,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn no_firewall_rules() -> Vec<FirewallRuleRecord> {
+        Vec::new()
+    }
+
+    fn attacker_at(host: &str) -> Vec<AttackerStartingPosition> {
+        vec![AttackerStartingPosition::new(
+            "attacker",
+            host,
+            PrivilegeLevel::User,
+        )]
+    }
+
+    fn goal(host: &str) -> Vec<AttackerTargetGoal> {
+        vec![AttackerTargetGoal::new("attacker", host)]
+    }
+
+    fn root_vulnerability(host: &str, cve: &str, service: &str) -> VulnerabilityRecord {
+        VulnerabilityRecord::new(host, cve, service, PrivilegeLevel::Root)
+    }
+
+    fn exec_on(host: &str, privilege: PrivilegeLevel) -> AttackerCodeExecution {
+        AttackerCodeExecution {
+            attacker_id: "attacker".to_string(),
+            compromised_host: host.to_string(),
+            obtained_privilege: privilege,
+        }
+    }
+
+    fn owns(host: &str) -> AttackerOwnsMachine {
+        AttackerOwnsMachine {
+            attacker_id: "attacker".to_string(),
+            owned_host: host.to_string(),
+        }
+    }
+
+    fn reached(host: &str) -> AttackerGoalReached {
+        AttackerGoalReached {
+            attacker_id: "attacker".to_string(),
+            reached_target: host.to_string(),
+        }
+    }
+
+    #[test]
+    fn simple_one_hop_compromise_reaches_goal() {
+        let graph = evaluate_attack_graph_naive(
+            vec![root_vulnerability("web", "CVE-WEB", "https")],
+            vec![NetworkAccessRule::new("internet", "web", "https")],
+            no_firewall_rules(),
+            attacker_at("internet"),
+            goal("web"),
+        );
+
+        assert!(graph
+            .effective_network_access
+            .contains(&EffectiveNetworkAccess {
+                source_host: "internet".to_string(),
+                destination_host: "web".to_string(),
+                service_name: "https".to_string(),
+            }));
+        assert!(graph
+            .code_executions
+            .contains(&exec_on("internet", PrivilegeLevel::User)));
+        assert!(graph
+            .code_executions
+            .contains(&exec_on("web", PrivilegeLevel::Root)));
+        assert!(graph.machines_owned.contains(&owns("web")));
+        assert!(graph.goals_reached.contains(&reached("web")));
+    }
+
+    #[test]
+    fn two_hop_compromise_propagates_to_database() {
+        let graph = evaluate_attack_graph_naive(
+            vec![
+                VulnerabilityRecord::new("web", "CVE-WEB", "https", PrivilegeLevel::User),
+                root_vulnerability("db", "CVE-DB", "postgres"),
+            ],
+            vec![
+                NetworkAccessRule::new("internet", "web", "https"),
+                NetworkAccessRule::new("web", "db", "postgres"),
+            ],
+            no_firewall_rules(),
+            attacker_at("internet"),
+            goal("db"),
+        );
+
+        assert!(graph
+            .code_executions
+            .contains(&exec_on("web", PrivilegeLevel::User)));
+        assert!(graph
+            .code_executions
+            .contains(&exec_on("db", PrivilegeLevel::Root)));
+        assert!(graph.machines_owned.contains(&owns("db")));
+        assert!(graph.goals_reached.contains(&reached("db")));
+    }
+
+    #[test]
+    fn firewall_deny_blocks_path() {
+        let graph = evaluate_attack_graph_naive(
+            vec![root_vulnerability("web", "CVE-WEB", "https")],
+            vec![NetworkAccessRule::new("internet", "web", "https")],
+            vec![FirewallRuleRecord::create_deny_rule(
+                "internet", "web", "https",
+            )],
+            attacker_at("internet"),
+            goal("web"),
+        );
+
+        assert!(graph.effective_network_access.is_empty());
+        assert!(graph
+            .code_executions
+            .contains(&exec_on("internet", PrivilegeLevel::User)));
+        assert!(!graph
+            .code_executions
+            .contains(&exec_on("web", PrivilegeLevel::Root)));
+        assert!(!graph.machines_owned.contains(&owns("web")));
+        assert!(!graph.goals_reached.contains(&reached("web")));
+    }
+
+    #[test]
+    fn removing_vulnerability_changes_recomputed_result() {
+        let network = vec![NetworkAccessRule::new("internet", "web", "https")];
+        let initial_graph = evaluate_attack_graph_naive(
+            vec![root_vulnerability("web", "CVE-WEB", "https")],
+            network.clone(),
+            no_firewall_rules(),
+            attacker_at("internet"),
+            goal("web"),
+        );
+        let patched_graph = evaluate_attack_graph_naive(
+            Vec::new(),
+            network,
+            no_firewall_rules(),
+            attacker_at("internet"),
+            goal("web"),
+        );
+
+        assert!(initial_graph
+            .code_executions
+            .contains(&exec_on("web", PrivilegeLevel::Root)));
+        assert!(initial_graph.goals_reached.contains(&reached("web")));
+        assert!(!patched_graph
+            .code_executions
+            .contains(&exec_on("web", PrivilegeLevel::Root)));
+        assert!(!patched_graph.goals_reached.contains(&reached("web")));
+    }
+}
