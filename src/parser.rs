@@ -235,3 +235,107 @@ fn parse_privilege(privilege: &str) -> Result<PrivilegeLevel, ParseError> {
         _ => Err(ParseError::InvalidPrivilege(privilege.to_string())),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_valid_facts_with_whitespace() {
+        assert_eq!(
+            parse_fact_line(" vulExists( web01 , cve_2024_1234 , http , user ). "),
+            Ok(Some(InputFact::VulExists(VulnerabilityRecord::new(
+                "web01",
+                "cve_2024_1234",
+                "http",
+                PrivilegeLevel::User
+            ))))
+        );
+        assert_eq!(
+            parse_fact_line("hacl(internet, web01, https)."),
+            Ok(Some(InputFact::Hacl(NetworkAccessRule::new(
+                "internet", "web01", "https"
+            ))))
+        );
+        assert_eq!(
+            parse_fact_line("firewallDeny(internet, web01, http)."),
+            Ok(Some(InputFact::FirewallDeny(
+                FirewallRuleRecord::create_deny_rule("internet", "web01", "http")
+            )))
+        );
+        assert_eq!(
+            parse_fact_line("attackerLocated(eve, internet, root)."),
+            Ok(Some(InputFact::AttackerLocated(
+                AttackerStartingPosition::new("eve", "internet", PrivilegeLevel::Root)
+            )))
+        );
+        assert_eq!(
+            parse_fact_line("attackGoal(eve, admin01)."),
+            Ok(Some(InputFact::AttackGoal(AttackerTargetGoal::new(
+                "eve", "admin01"
+            ))))
+        );
+    }
+
+    #[test]
+    fn skips_comments_and_blank_lines() {
+        assert_eq!(parse_fact_line(""), Ok(None));
+        assert_eq!(parse_fact_line("   "), Ok(None));
+        assert_eq!(parse_fact_line("% comment"), Ok(None));
+        assert_eq!(parse_fact_line("  # another comment"), Ok(None));
+    }
+
+    #[test]
+    fn rejects_invalid_predicate_names() {
+        assert_eq!(
+            parse_fact_line("unknownFact(a, b)."),
+            Err(ParseError::UnknownPredicate("unknownFact".to_string()))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_privilege_values() {
+        assert_eq!(
+            parse_fact_line("attackerLocated(eve, internet, admin)."),
+            Err(ParseError::InvalidPrivilege("admin".to_string()))
+        );
+    }
+
+    #[test]
+    fn rejects_missing_period() {
+        assert_eq!(
+            parse_fact_line("hacl(internet, web01, https)"),
+            Err(ParseError::MissingPeriod)
+        );
+    }
+
+    #[test]
+    fn parses_fact_file_into_input_scenario() {
+        let path = std::env::temp_dir().join(format!(
+            "dynamic_attack_graphs_parser_test_{}.facts",
+            std::process::id()
+        ));
+
+        std::fs::write(
+            &path,
+            r#"
+                # Enterprise scenario
+                vulExists(web01, cve_2024_1234, http, user).
+                hacl(internet, web01, http).
+                firewallDeny(internet, db01, postgres).
+                attackerLocated(eve, internet, user).
+                attackGoal(eve, web01).
+            "#,
+        )
+        .expect("test fact file should be writable");
+
+        let scenario = parse_facts_file(&path).expect("test fact file should parse");
+        std::fs::remove_file(&path).expect("test fact file should be removable");
+
+        assert_eq!(scenario.vulnerabilities.len(), 1);
+        assert_eq!(scenario.network_access.len(), 1);
+        assert_eq!(scenario.firewall_rules.len(), 1);
+        assert_eq!(scenario.attacker_positions.len(), 1);
+        assert_eq!(scenario.attacker_goals.len(), 1);
+    }
+}
