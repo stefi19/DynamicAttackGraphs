@@ -105,7 +105,29 @@ does not expose a derivation-count table as its maintenance mechanism.
 
 ---
 
-## 3. Data Model
+## 3. Terminology Accuracy
+
+- **Materialisation**: The stored set of facts derived from the base facts and
+  rules at a particular logical time.
+- **Full recomputation**: Discarding the old dataflow state and rebuilding the
+  derived facts from the updated base facts.
+- **Incremental maintenance**: Updating the existing materialisation after a
+  base fact changes, ideally doing work proportional to the affected region.
+- **DRed**: Delete/Rederive maintenance. It may overdelete facts that could
+  still have alternate proofs, then rederive the facts that remain valid.
+- **B/F**: Backward/Forward maintenance. It uses backward chaining to check
+  threatened facts for alternate proofs and forward chaining to propagate real
+  consequences. It is not simply derivation counting.
+- **Differential updates**: Signed changes that are propagated through
+  Differential Dataflow operators. Accumulated multiplicity determines whether a
+  record is present.
+- **Provenance**: Information about why a derived fact holds. The current
+  prototype reconstructs selected explanations separately; Differential
+  Dataflow diffs do not by themselves provide a full proof tree.
+
+---
+
+## 4. Data Model
 
 We model the attack graph with these collections:
 
@@ -126,7 +148,7 @@ DERIVED FACTS (Output):
 
 ---
 
-## 4. Dataflow Pipeline
+## 5. Dataflow Pipeline
 
 ```
 Input Collections
@@ -178,7 +200,7 @@ Time 2: Vulnerability patched
 
 ---
 
-## 5. Implementation Details
+## 6. Implementation Details
 
 ### Arrangements (Indexed Collections)
 
@@ -212,7 +234,7 @@ Iteration stops when no new changes occur.
 
 ---
 
-## 6. Performance
+## 7. Performance
 
 ### Time Complexity
 
@@ -234,7 +256,7 @@ Actual performance depends on vulnerability density and network topology.
 
 ---
 
-## 7. Why Differential Dataflow?
+## 8. Why Differential Dataflow?
 
 Compared to alternatives:
 
