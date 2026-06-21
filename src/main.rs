@@ -8,8 +8,9 @@ use std::time::Instant;
 use clap::Parser;
 use differential_dataflow::input::{Input, InputSession};
 use dynamic_attack_graphs::{
-    build_attack_graph, parse_facts_file, AttackerStartingPosition, AttackerTargetGoal,
-    FirewallRuleRecord, InputScenario, NetworkAccessRule, PrivilegeLevel, VulnerabilityRecord,
+    build_attack_graph, parse_facts_file, parse_update_file, AttackerStartingPosition,
+    AttackerTargetGoal, FirewallRuleRecord, InputFact, InputScenario, InputUpdate,
+    NetworkAccessRule, PrivilegeLevel, VulnerabilityRecord,
 };
 use timely::dataflow::operators::probe::Handle;
 
@@ -56,6 +57,10 @@ fn run_fact_file_scenario(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         .as_ref()
         .expect("scenario path should exist when scenario mode is selected");
     let scenario = parse_facts_file(scenario_path)?;
+    let updates = match &cli.update {
+        Some(path) => parse_update_file(path)?,
+        None => Vec::new(),
+    };
 
     if let Some(fact) = &cli.explain {
         println!("--explain is not implemented yet; requested fact: {fact}");
@@ -66,13 +71,6 @@ fn run_fact_file_scenario(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
             path.display()
         );
     }
-    if let Some(path) = &cli.update {
-        println!(
-            "--update is not implemented yet; requested path: {}",
-            path.display()
-        );
-    }
-
     println!("========================================================================");
     println!("     Dynamic Attack Graphs using Differential Dataflow");
     println!("                    Scenario File Mode");
@@ -86,6 +84,9 @@ fn run_fact_file_scenario(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         scenario.attacker_positions.len(),
         scenario.attacker_goals.len()
     );
+    if let Some(path) = &cli.update {
+        println!("Update: {} ({} changes)", path.display(), updates.len());
+    }
     println!("------------------------------------------------------------------------");
     println!("DERIVED FACTS");
     println!("------------------------------------------------------------------------");
@@ -180,6 +181,40 @@ fn run_fact_file_scenario(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
             "Initial scenario computation completed in {:?}",
             computation_start_time.elapsed()
         );
+
+        if !updates.is_empty() {
+            println!("------------------------------------------------------------------------");
+            println!("APPLYING UPDATE FACTS");
+            println!("------------------------------------------------------------------------");
+
+            let update_start_time = Instant::now();
+            apply_updates(
+                &updates,
+                &mut vulnerability_input,
+                &mut network_access_input,
+                &mut firewall_rules_input,
+                &mut attacker_position_input,
+                &mut attacker_goal_input,
+            );
+            advance_all_inputs(
+                2,
+                &mut vulnerability_input,
+                &mut network_access_input,
+                &mut firewall_rules_input,
+                &mut attacker_position_input,
+                &mut attacker_goal_input,
+            );
+
+            while computation_probe.less_than(&2) {
+                worker.step();
+            }
+
+            println!("------------------------------------------------------------------------");
+            println!(
+                "Incremental update completed in {:?}",
+                update_start_time.elapsed()
+            );
+        }
     });
 
     Ok(())
@@ -207,6 +242,70 @@ fn insert_scenario_facts(
     }
     for goal in &scenario.attacker_goals {
         attacker_goal_input.insert(goal.clone());
+    }
+}
+
+fn apply_updates(
+    updates: &[InputUpdate],
+    vulnerability_input: &mut InputSession<usize, VulnerabilityRecord, isize>,
+    network_access_input: &mut InputSession<usize, NetworkAccessRule, isize>,
+    firewall_rules_input: &mut InputSession<usize, FirewallRuleRecord, isize>,
+    attacker_position_input: &mut InputSession<usize, AttackerStartingPosition, isize>,
+    attacker_goal_input: &mut InputSession<usize, AttackerTargetGoal, isize>,
+) {
+    for update in updates {
+        match update {
+            InputUpdate::Insert(fact) => apply_fact_insert(
+                fact,
+                vulnerability_input,
+                network_access_input,
+                firewall_rules_input,
+                attacker_position_input,
+                attacker_goal_input,
+            ),
+            InputUpdate::Remove(fact) => apply_fact_remove(
+                fact,
+                vulnerability_input,
+                network_access_input,
+                firewall_rules_input,
+                attacker_position_input,
+                attacker_goal_input,
+            ),
+        }
+    }
+}
+
+fn apply_fact_insert(
+    fact: &InputFact,
+    vulnerability_input: &mut InputSession<usize, VulnerabilityRecord, isize>,
+    network_access_input: &mut InputSession<usize, NetworkAccessRule, isize>,
+    firewall_rules_input: &mut InputSession<usize, FirewallRuleRecord, isize>,
+    attacker_position_input: &mut InputSession<usize, AttackerStartingPosition, isize>,
+    attacker_goal_input: &mut InputSession<usize, AttackerTargetGoal, isize>,
+) {
+    match fact {
+        InputFact::VulExists(vulnerability) => vulnerability_input.insert(vulnerability.clone()),
+        InputFact::Hacl(access) => network_access_input.insert(access.clone()),
+        InputFact::FirewallDeny(rule) => firewall_rules_input.insert(rule.clone()),
+        InputFact::AttackerLocated(position) => attacker_position_input.insert(position.clone()),
+        InputFact::AttackGoal(goal) => attacker_goal_input.insert(goal.clone()),
+    }
+}
+
+fn apply_fact_remove(
+    fact: &InputFact,
+    vulnerability_input: &mut InputSession<usize, VulnerabilityRecord, isize>,
+    network_access_input: &mut InputSession<usize, NetworkAccessRule, isize>,
+    firewall_rules_input: &mut InputSession<usize, FirewallRuleRecord, isize>,
+    attacker_position_input: &mut InputSession<usize, AttackerStartingPosition, isize>,
+    attacker_goal_input: &mut InputSession<usize, AttackerTargetGoal, isize>,
+) {
+    match fact {
+        InputFact::VulExists(vulnerability) => vulnerability_input.remove(vulnerability.clone()),
+        InputFact::Hacl(access) => network_access_input.remove(access.clone()),
+        InputFact::FirewallDeny(rule) => firewall_rules_input.remove(rule.clone()),
+        InputFact::AttackerLocated(position) => attacker_position_input.remove(position.clone()),
+        InputFact::AttackGoal(goal) => attacker_goal_input.remove(goal.clone()),
     }
 }
 

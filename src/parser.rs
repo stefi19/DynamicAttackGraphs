@@ -17,6 +17,12 @@ pub enum InputFact {
     AttackGoal(AttackerTargetGoal),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputUpdate {
+    Insert(InputFact),
+    Remove(InputFact),
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InputScenario {
     pub vulnerabilities: Vec<VulnerabilityRecord>,
@@ -201,6 +207,47 @@ pub fn parse_facts_file(path: &Path) -> Result<InputScenario, ParseError> {
     Ok(scenario)
 }
 
+pub fn parse_update_line(line: &str) -> Result<Option<InputUpdate>, ParseError> {
+    let trimmed = line.trim();
+
+    if trimmed.is_empty() || trimmed.starts_with('%') || trimmed.starts_with('#') {
+        return Ok(None);
+    }
+
+    if !trimmed.ends_with('.') {
+        return Err(ParseError::MissingPeriod);
+    }
+
+    let body = trimmed[..trimmed.len() - 1].trim();
+    if body.starts_with("remove(") && body.ends_with(')') {
+        let inner_fact = body["remove(".len()..body.len() - 1].trim();
+        let fact_line = format!("{inner_fact}.");
+        return parse_fact_line(&fact_line).map(|fact| fact.map(InputUpdate::Remove));
+    }
+
+    parse_fact_line(trimmed).map(|fact| fact.map(InputUpdate::Insert))
+}
+
+pub fn parse_update_file(path: &Path) -> Result<Vec<InputUpdate>, ParseError> {
+    let contents = fs::read_to_string(path).map_err(|error| ParseError::Io {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })?;
+
+    let mut updates = Vec::new();
+
+    for (line_index, line) in contents.lines().enumerate() {
+        if let Some(update) = parse_update_line(line).map_err(|source| ParseError::Line {
+            line_number: line_index + 1,
+            source: Box::new(source),
+        })? {
+            updates.push(update);
+        }
+    }
+
+    Ok(updates)
+}
+
 fn parse_arguments(arguments: &str) -> Result<Vec<String>, ParseError> {
     let parsed_arguments: Vec<_> = arguments
         .split(',')
@@ -337,5 +384,27 @@ mod tests {
         assert_eq!(scenario.firewall_rules.len(), 1);
         assert_eq!(scenario.attacker_positions.len(), 1);
         assert_eq!(scenario.attacker_goals.len(), 1);
+    }
+
+    #[test]
+    fn parses_remove_update_lines() {
+        assert_eq!(
+            parse_update_line("remove(vulExists(web01, cve_2024_1234, http, user))."),
+            Ok(Some(InputUpdate::Remove(InputFact::VulExists(
+                VulnerabilityRecord::new("web01", "cve_2024_1234", "http", PrivilegeLevel::User)
+            ))))
+        );
+        assert_eq!(
+            parse_update_line("remove(hacl(internet, web01, https))."),
+            Ok(Some(InputUpdate::Remove(InputFact::Hacl(
+                NetworkAccessRule::new("internet", "web01", "https")
+            ))))
+        );
+        assert_eq!(
+            parse_update_line("firewallDeny(internet, web01, https)."),
+            Ok(Some(InputUpdate::Insert(InputFact::FirewallDeny(
+                FirewallRuleRecord::create_deny_rule("internet", "web01", "https")
+            ))))
+        );
     }
 }
