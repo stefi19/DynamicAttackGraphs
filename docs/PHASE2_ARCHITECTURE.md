@@ -134,6 +134,7 @@ We model the attack graph with these collections:
 ```
 BASE FACTS (Input):
   vulnerability    : (Host, CVE, Service, Privilege)
+  local_vulnerability : (Host, CVE, Privilege)
   network_access   : (SrcHost, DstHost, Service)
   firewall_rule    : (Src, Dst, Service, Action)
   attacker_located : (Attacker, Host, Privilege)
@@ -174,7 +175,13 @@ Input Collections
        |
        v
 +----------------------------------+
-| Rule 4: Privilege escalation     |
+| Rule 4: Local privilege esc.     |
+| non-root exec + local vuln       |
++----------------------------------+
+       |
+       v
++----------------------------------+
+| Rule 5: Ownership and goals      |
 | owns_machine if has root         |
 +----------------------------------+
        |
@@ -202,18 +209,20 @@ Time 2: Vulnerability patched
 
 ## 6. Implementation Details
 
-### Arrangements (Indexed Collections)
+### Join Keys and Future Arrangements
 
-For efficient joins, we pre-index collections:
+The implementation keys joins by mapping records to suitable key-value pairs:
 
 ```rust
-// Index vulnerabilities by host
-let vulnerabilities_by_host = vulnerability_collection
+// Key vulnerabilities by host and service before joining.
+let vulnerabilities_by_host_and_service = vulnerability_collection
     .map(|vuln| (vuln.host_name.clone(), vuln))
-    .arrange_by_key();
-
-// Joins on host are now O(log n) not O(n^2)
 ```
+
+Differential Dataflow can also use explicit arrangements to reuse indexes across
+operators. The current prototype relies on keyed joins directly; a future
+optimization could introduce explicit arrangements where profiling shows
+repeated index construction is material.
 
 ### Iteration for Fixpoint
 
@@ -263,12 +272,13 @@ Compared to alternatives:
 | System | Incrementality | Open Source | Distributed |
 |--------|---------------|-------------|-------------|
 | Differential Dataflow | Yes | Yes (MIT) | Yes |
-| Souffle | Partial (DRed) | Yes | No |
-| LogicBlox | Yes | No (Commercial) | Yes |
-| DDlog | Yes | Yes (MIT) | No |
+| Souffle | High-performance Datalog baseline; incremental mode should be verified for the chosen release | Yes | No |
+| LogicBlox | Incremental Datalog system; availability and licensing should be verified | No | Yes |
+| DDlog | Incremental Datalog-derived system; project status should be verified | Yes | No |
 
 We chose differential dataflow because:
 - Native incrementality with counting semantics
-- Open source and production-ready
+- Open source implementation suitable for research prototyping
 - Supports streaming updates
-- Scales to distributed computation
+- Has a dataflow model that can scale beyond a single process, although this
+  prototype currently benchmarks direct single-process execution
