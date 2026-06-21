@@ -75,7 +75,11 @@ cargo run --release --example explain_goal
 dot -Tpng explanation_goal.dot -o explanation_goal.png
 ```
 
-The generated `explanation_goal.dot` shows base facts as gray boxes, derived facts as blue boxes, rule applications as orange diamonds, and the selected target goal highlighted in red.
+The generated `explanation_goal.dot` shows base facts as gray boxes, derived
+facts as blue boxes, rule applications as orange diamonds, and the selected
+target goal highlighted in red. The provenance layer reconstructs one valid
+explanation after computation; it does not enumerate all minimal attack paths or
+store proof trees inside Differential Dataflow.
 
 ---
 

@@ -123,7 +123,10 @@ does not expose a derivation-count table as its maintenance mechanism.
   record is present.
 - **Provenance**: Information about why a derived fact holds. The current
   prototype reconstructs selected explanations separately; Differential
-  Dataflow diffs do not by themselves provide a full proof tree.
+  Dataflow diffs do not by themselves provide a full proof tree. The current
+  explainer returns one valid proof path for selected facts, including remote
+  propagation and local privilege escalation; it does not enumerate all minimal
+  attack paths.
 
 ---
 

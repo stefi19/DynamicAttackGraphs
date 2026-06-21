@@ -527,8 +527,10 @@ valid explanation tree for selected derived facts after computation. For
 example, a \texttt{goalReached(eve, admin01)} fact can be explained through the
 corresponding \texttt{ownsMachine} fact, the root-level \texttt{execCode} fact,
 the effective network access facts, and the vulnerability facts that support the
-path. This provenance is currently reconstructed from the final base and derived
-fact sets rather than maintained inside Differential Dataflow itself.
+path, including local privilege escalation facts when they are part of the
+selected proof. This provenance is currently reconstructed from the final base
+and derived fact sets rather than maintained inside Differential Dataflow
+itself.
 
 The current implementation therefore supports RQ4 for selected changed paths:
 it can explain why a goal is reachable after an update, or why an alternative
@@ -620,9 +622,10 @@ as rich semantic objects with preconditions, exploit availability, version
 ranges, or environmental constraints.
 
 The provenance layer currently reconstructs selected explanation paths from the
-final base and derived fact sets. It can explain one valid proof for a fact such
-as \texttt{goalReached}, but it does not enumerate all proofs, all minimal
-attack paths, or all changed explanations after an update. Finally, all
+final base and derived fact sets, separate from Differential Dataflow internals.
+It can explain one valid proof for a fact such as \texttt{goalReached}, but it
+does not enumerate all proofs, all minimal attack paths, or all changed
+explanations after an update. Finally, all
 benchmarks reported here use single-worker execution for measurement stability.
 Distributed Timely/Differential execution is a natural future direction, but it
 is not evaluated in this prototype.
