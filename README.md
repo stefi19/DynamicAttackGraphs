@@ -57,6 +57,19 @@ dot -Tpng graph_final.dot -o graph_final.png
 - 🟢 Green: Target safe
 - Red edges: Active attack path
 
+### Visualizing Provenance Explanations
+
+Generate a proof tree for a selected goal and export it as Graphviz DOT:
+
+```bash
+cargo run --release --example explain_goal
+
+# Convert the explanation graph to PNG
+dot -Tpng explanation_goal.dot -o explanation_goal.png
+```
+
+The generated `explanation_goal.dot` shows base facts as gray boxes, derived facts as blue boxes, rule applications as orange diamonds, and the selected target goal highlighted in red.
+
 ---
 
 ## 🛠 Local Development
@@ -91,6 +104,9 @@ cargo run --release --example simple_demo
 
 # Run visualization export
 cargo run --release --example graphviz_export
+
+# Run provenance explanation export
+cargo run --release --example explain_goal
 ```
 
 Scenario files use simple base facts:
