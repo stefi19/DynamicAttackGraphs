@@ -160,4 +160,39 @@ mod tests {
         assert!(metrics.changed_exec_code_facts >= 3);
         assert!(metrics.affected_hosts >= 3);
     }
+
+    #[test]
+    fn metrics_are_deterministic() {
+        let first = VulnerabilityRecord::new("node_1", "CVE-1", "https", PrivilegeLevel::User);
+        let mut facts = BaseFacts {
+            vulnerabilities: vec![
+                first.clone(),
+                VulnerabilityRecord::new("node_2", "CVE-2", "https", PrivilegeLevel::Root),
+            ],
+            network_access: vec![
+                NetworkAccessRule::new("node_0", "node_1", "https"),
+                NetworkAccessRule::new("node_1", "node_2", "https"),
+            ],
+            attacker_positions: vec![AttackerStartingPosition::new(
+                "eve",
+                "node_0",
+                PrivilegeLevel::User,
+            )],
+            attacker_goals: vec![AttackerTargetGoal::new("eve", "node_2")],
+            ..BaseFacts::default()
+        };
+
+        let before = evaluate_base_facts(&facts);
+        facts.apply_update(FactUpdate::RemoveVulnerability(first));
+        let after = evaluate_base_facts(&facts);
+
+        let first_metrics = diff_derived_facts(&before, &after);
+        let second_metrics = diff_derived_facts(&before, &after);
+        assert_eq!(first_metrics, second_metrics);
+
+        let affected_hosts = affected_hosts_from_diff(&before, &after);
+        assert!(affected_hosts.contains("node_1"));
+        assert!(affected_hosts.contains("node_2"));
+        assert_eq!(affected_hosts.len(), first_metrics.affected_hosts);
+    }
 }

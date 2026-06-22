@@ -205,8 +205,16 @@ impl BenchmarkCsvRow {
                     .derived_facts_before_update
                     .abs_diff(result.derived_facts_after_update),
             ),
-            affected_hosts: None,
+            affected_hosts: affected_hosts_for_basic_update(topology, number_of_nodes),
         }
+    }
+}
+
+fn affected_hosts_for_basic_update(topology: &str, number_of_nodes: usize) -> Option<usize> {
+    match topology {
+        "star" => Some(1),
+        "chain" => Some(number_of_nodes.saturating_sub(1)),
+        _ => None,
     }
 }
 
