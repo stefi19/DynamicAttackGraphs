@@ -86,6 +86,12 @@ pub struct BenchmarkCsvRow {
     pub derived_facts_before: usize,
     pub derived_facts_after: usize,
     pub changed_facts: Option<usize>,
+    pub changed_base_facts: Option<usize>,
+    pub changed_exec_code_facts: Option<usize>,
+    pub changed_ownership_facts: Option<usize>,
+    pub changed_goal_facts: Option<usize>,
+    pub changed_derived_facts: Option<usize>,
+    pub affected_hosts: Option<usize>,
 }
 
 impl BenchmarkCsvRow {
@@ -130,6 +136,12 @@ impl BenchmarkCsvRow {
             derived_facts_before: 0,
             derived_facts_after: 0,
             changed_facts: None,
+            changed_base_facts: None,
+            changed_exec_code_facts: None,
+            changed_ownership_facts: None,
+            changed_goal_facts: None,
+            changed_derived_facts: None,
+            affected_hosts: None,
         }
     }
 
@@ -148,6 +160,12 @@ impl BenchmarkCsvRow {
             derived_facts_before: result.derived_facts_before_update,
             derived_facts_after: result.derived_facts_after_update,
             changed_facts: Some(result.changed_derived_facts),
+            changed_base_facts: Some(result.changed_base_facts),
+            changed_exec_code_facts: None,
+            changed_ownership_facts: None,
+            changed_goal_facts: None,
+            changed_derived_facts: Some(result.changed_derived_facts),
+            affected_hosts: None,
         }
     }
 
@@ -178,6 +196,16 @@ impl BenchmarkCsvRow {
                     .derived_facts_before_update
                     .abs_diff(result.derived_facts_after_update),
             ),
+            changed_base_facts: Some(1),
+            changed_exec_code_facts: None,
+            changed_ownership_facts: None,
+            changed_goal_facts: None,
+            changed_derived_facts: Some(
+                result
+                    .derived_facts_before_update
+                    .abs_diff(result.derived_facts_after_update),
+            ),
+            affected_hosts: None,
         }
     }
 }
@@ -185,13 +213,13 @@ impl BenchmarkCsvRow {
 pub fn write_benchmark_csv<W: Write>(writer: &mut W, rows: &[BenchmarkCsvRow]) -> io::Result<()> {
     writeln!(
         writer,
-        "benchmark_name,topology,number_of_nodes,number_of_edges,number_of_vulnerabilities,update_type,initial_time_ms,incremental_update_us,full_recomputation_ms,speedup,derived_facts_before,derived_facts_after,changed_facts"
+        "benchmark_name,topology,number_of_nodes,number_of_edges,number_of_vulnerabilities,update_type,initial_time_ms,incremental_update_us,full_recomputation_ms,speedup,derived_facts_before,derived_facts_after,changed_facts,changed_base_facts,changed_exec_code_facts,changed_ownership_facts,changed_goal_facts,changed_derived_facts,affected_hosts"
     )?;
 
     for row in rows {
         writeln!(
             writer,
-            "{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{},{},{}",
+            "{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{}",
             escape_csv_field(&row.benchmark_name),
             escape_csv_field(&row.topology),
             row.number_of_nodes,
@@ -204,13 +232,21 @@ pub fn write_benchmark_csv<W: Write>(writer: &mut W, rows: &[BenchmarkCsvRow]) -
             row.speedup,
             row.derived_facts_before,
             row.derived_facts_after,
-            row.changed_facts
-                .map(|count| count.to_string())
-                .unwrap_or_default()
+            optional_usize(row.changed_facts),
+            optional_usize(row.changed_base_facts),
+            optional_usize(row.changed_exec_code_facts),
+            optional_usize(row.changed_ownership_facts),
+            optional_usize(row.changed_goal_facts),
+            optional_usize(row.changed_derived_facts),
+            optional_usize(row.affected_hosts)
         )?;
     }
 
     Ok(())
+}
+
+fn optional_usize(value: Option<usize>) -> String {
+    value.map(|count| count.to_string()).unwrap_or_default()
 }
 
 fn duration_to_ms(duration: Duration) -> f64 {
@@ -2002,6 +2038,12 @@ mod tests {
             derived_facts_before: 9,
             derived_facts_after: 4,
             changed_facts: Some(5),
+            changed_base_facts: Some(1),
+            changed_exec_code_facts: None,
+            changed_ownership_facts: None,
+            changed_goal_facts: None,
+            changed_derived_facts: Some(5),
+            affected_hosts: None,
         }];
         let mut output = Vec::new();
 
@@ -2010,6 +2052,6 @@ mod tests {
 
         assert!(csv.starts_with("benchmark_name,topology,number_of_nodes"));
         assert!(csv.contains("\"example,benchmark\",chain,3,2,3,patch"));
-        assert!(csv.contains(",9,4,5\n"));
+        assert!(csv.contains(",9,4,5,1,,,,5,\n"));
     }
 }
