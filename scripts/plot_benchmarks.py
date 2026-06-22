@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--csv", default="docs/assets/benchmark_results.csv", type=Path)
     parser.add_argument("--out", default="docs/assets", type=Path)
     parser.add_argument("--paper-out", default="paper/figures", type=Path)
+    parser.add_argument("--website-out", default=None, type=Path)
     return parser.parse_args()
 
 
@@ -41,12 +42,13 @@ def as_int(row: dict[str, str], key: str) -> int:
     return int(value) if value else 0
 
 
-def save_and_copy(fig: plt.Figure, out_path: Path, paper_out: Path) -> None:
+def save_and_copy(fig: plt.Figure, out_path: Path, extra_outputs: list[Path]) -> None:
     fig.tight_layout()
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
-    paper_out.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(out_path, paper_out / out_path.name)
+    for output_dir in extra_outputs:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(out_path, output_dir / out_path.name)
 
 
 def no_data_plot(title: str) -> plt.Figure:
@@ -58,7 +60,12 @@ def no_data_plot(title: str) -> plt.Figure:
 
 
 def plot_topology_speedup(
-    rows: list[dict[str, str]], topology: str, title: str, output_name: str, out_dir: Path, paper_out: Path
+    rows: list[dict[str, str]],
+    topology: str,
+    title: str,
+    output_name: str,
+    out_dir: Path,
+    extra_outputs: list[Path],
 ) -> None:
     filtered = sorted(
         [row for row in rows if row.get("topology") == topology],
@@ -79,16 +86,18 @@ def plot_topology_speedup(
         ax.set_ylabel("Speedup (full recomputation / incremental)")
         ax.set_title(title)
         ax.grid(True, alpha=0.3)
-    save_and_copy(fig, out_dir / output_name, paper_out)
+    save_and_copy(fig, out_dir / output_name, extra_outputs)
 
 
-def plot_incremental_vs_recompute(rows: list[dict[str, str]], out_dir: Path, paper_out: Path) -> None:
+def plot_incremental_vs_recompute(
+    rows: list[dict[str, str]], out_dir: Path, extra_outputs: list[Path]
+) -> None:
     filtered = [
         row for row in rows if row.get("topology") in {"star", "chain"} and row.get("full_recomputation_ms")
     ]
     if not filtered:
         fig = no_data_plot("Incremental update vs full recomputation")
-        save_and_copy(fig, out_dir / "incremental_vs_recompute.png", paper_out)
+        save_and_copy(fig, out_dir / "incremental_vs_recompute.png", extra_outputs)
         return
 
     labels = [
@@ -109,10 +118,12 @@ def plot_incremental_vs_recompute(rows: list[dict[str, str]], out_dir: Path, pap
     ax.set_title("Incremental update time compared with full recomputation")
     ax.legend()
     ax.grid(True, axis="y", alpha=0.3)
-    save_and_copy(fig, out_dir / "incremental_vs_recompute.png", paper_out)
+    save_and_copy(fig, out_dir / "incremental_vs_recompute.png", extra_outputs)
 
 
-def plot_enterprise_patterns(rows: list[dict[str, str]], out_dir: Path, paper_out: Path) -> None:
+def plot_enterprise_patterns(
+    rows: list[dict[str, str]], out_dir: Path, extra_outputs: list[Path]
+) -> None:
     filtered = [row for row in rows if row.get("topology") == "layered_enterprise"]
     if not filtered:
         fig = no_data_plot("Layered enterprise update pattern speedups")
@@ -130,19 +141,61 @@ def plot_enterprise_patterns(rows: list[dict[str, str]], out_dir: Path, paper_ou
         for label in ax.get_xticklabels():
             label.set_ha("right")
         ax.grid(True, axis="y", alpha=0.3)
-    save_and_copy(fig, out_dir / "enterprise_update_patterns.png", paper_out)
+    save_and_copy(fig, out_dir / "enterprise_update_patterns.png", extra_outputs)
+
+
+def plot_affected_region(rows: list[dict[str, str]], out_dir: Path, extra_outputs: list[Path]) -> None:
+    if not rows or "affected_hosts" not in rows[0] or "incremental_update_us" not in rows[0]:
+        print("Skipping affected_region_vs_update_time.png: required columns are not available.")
+        return
+
+    filtered = [row for row in rows if row.get("affected_hosts")]
+    if not filtered:
+        print("Skipping affected_region_vs_update_time.png: no affected-host data in CSV.")
+        return
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.scatter(
+        [as_float(row, "affected_hosts") for row in filtered],
+        [as_float(row, "incremental_update_us") / 1000.0 for row in filtered],
+        color="#17becf",
+    )
+    ax.set_xlabel("Affected hosts")
+    ax.set_ylabel("Incremental update time (ms)")
+    ax.set_title("Affected region size versus update time")
+    ax.grid(True, alpha=0.3)
+    save_and_copy(fig, out_dir / "affected_region_vs_update_time.png", extra_outputs)
 
 
 def main() -> None:
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     args.paper_out.mkdir(parents=True, exist_ok=True)
+    extra_outputs = [args.paper_out]
+    if args.website_out:
+        args.website_out.mkdir(parents=True, exist_ok=True)
+        extra_outputs.append(args.website_out)
 
     rows = read_rows(args.csv)
-    plot_topology_speedup(rows, "star", "Localized update speedup in star topologies", "star_speedup.png", args.out, args.paper_out)
-    plot_topology_speedup(rows, "chain", "Localized update speedup in chain topologies", "chain_speedup.png", args.out, args.paper_out)
-    plot_incremental_vs_recompute(rows, args.out, args.paper_out)
-    plot_enterprise_patterns(rows, args.out, args.paper_out)
+    plot_topology_speedup(
+        rows,
+        "star",
+        "Localized update speedup in star topologies",
+        "star_speedup.png",
+        args.out,
+        extra_outputs,
+    )
+    plot_topology_speedup(
+        rows,
+        "chain",
+        "Localized update speedup in chain topologies",
+        "chain_speedup.png",
+        args.out,
+        extra_outputs,
+    )
+    plot_incremental_vs_recompute(rows, args.out, extra_outputs)
+    plot_enterprise_patterns(rows, args.out, extra_outputs)
+    plot_affected_region(rows, args.out, extra_outputs)
 
 
 if __name__ == "__main__":

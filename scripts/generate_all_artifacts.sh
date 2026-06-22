@@ -14,7 +14,7 @@ require_command() {
   fi
 }
 
-mkdir -p docs/assets paper/figures
+mkdir -p docs/assets paper/figures website/assets
 
 require_command cargo "install Rust from https://rustup.rs"
 require_command dot "brew install graphviz"
@@ -36,17 +36,22 @@ dot -Tpng graph_initial.dot -o docs/assets/graph_initial.png
 dot -Tpng graph_final.dot -o docs/assets/graph_final.png
 cp docs/assets/graph_initial.png paper/figures/graph_initial.png
 cp docs/assets/graph_final.png paper/figures/graph_final.png
+cp docs/assets/graph_initial.png website/assets/graph_initial.png
+cp docs/assets/graph_final.png website/assets/graph_final.png
 
 cargo run --release --example explain_goal
 dot -Tpng explanation_goal.dot -o docs/assets/explanation_goal.png
 cp docs/assets/explanation_goal.png paper/figures/explanation_goal.png
+cp docs/assets/explanation_goal.png website/assets/explanation_goal.png
 
 cargo run --release --example run_benchmarks -- --csv docs/assets/benchmark_results.csv
+cp docs/assets/benchmark_results.csv website/assets/benchmark_results.csv
 
 python3 scripts/plot_benchmarks.py \
   --csv docs/assets/benchmark_results.csv \
   --out docs/assets \
-  --paper-out paper/figures
+  --paper-out paper/figures \
+  --website-out website/assets
 
 cd paper
 if command -v latexmk >/dev/null 2>&1; then
@@ -61,4 +66,16 @@ else
   fi
   pdflatex -interaction=nonstopmode -halt-on-error main.tex
   pdflatex -interaction=nonstopmode -halt-on-error main.tex
+fi
+
+cd ..
+if [ ! -f paper/main.pdf ]; then
+  echo "Expected paper/main.pdf was not generated." >&2
+  exit 1
+fi
+
+cp paper/main.pdf website/assets/main.pdf
+if [ ! -f website/index.html ]; then
+  echo "Expected website/index.html is missing." >&2
+  exit 1
 fi
