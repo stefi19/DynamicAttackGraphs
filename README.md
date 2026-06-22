@@ -286,7 +286,33 @@ paper/
 docs/
   PHASE1_CONCEPTUAL_FRAMEWORK.md
   PHASE2_ARCHITECTURE.md
+  presentation.tex   - Beamer presentation
+  one_page_summary.tex - A4 one-page summary
 ```
+
+## Slides and one-page summary (LaTeX)
+
+Beamer slides and a one-page summary are included in `docs/`:
+
+- `docs/presentation.tex` — Beamer presentation (place `graph_initial.png` and `graph_final.png` in the project root or `docs/` before compiling).
+- `docs/one_page_summary.tex` — A4 one-page summary extracted from speaker notes.
+
+To compile the documents locally:
+
+```bash
+cd docs
+pdflatex presentation.tex
+pdflatex presentation.tex   # run twice for references
+pdflatex one_page_summary.tex
+```
+
+If Graphviz images are missing, generate them as:
+
+```bash
+dot -Tpng graph_initial.dot -o graph_initial.png
+dot -Tpng graph_final.dot -o graph_final.png
+```
+
 
 ---
 

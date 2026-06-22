@@ -27,13 +27,6 @@ O.~Sheyner, J.~Haines, S.~Jha, R.~Lippmann, and J.~M. Wing, ``Automated
   Security and Privacy}.\hskip 1em plus 0.5em minus 0.4em\relax IEEE, 2002, pp.
   273--284.
 
-\bibitem{cvedetails}
-\BIBentryALTinterwordspacing
-{CVE Details}, ``{CVE Details}: The ultimate security vulnerability
-  datasource,'' 2024, accessed: 2024-12-31. [Online]. Available:
-  \url{https://www.cvedetails.com/}
-\BIBentrySTDinterwordspacing
-
 \bibitem{ou2006mulval}
 X.~Ou, S.~Govindavajhala, and A.~W. Appel, ``{MulVAL}: A logic-based network
   security analyzer,'' in \emph{14th USENIX Security Symposium}.\hskip 1em plus
@@ -74,6 +67,18 @@ A.~Gupta, I.~S. Mumick, and V.~S. Subrahmanian, ``Maintaining views
 M.~Staudt and M.~Jarke, ``Incremental maintenance of externally materialized
   views,'' \emph{Proceedings of the 21st International Conference on Very Large
   Data Bases (VLDB)}, pp. 75--86, 1995.
+
+\bibitem{motik2015incremental}
+B.~Motik, Y.~Nenov, R.~Piro, and I.~Horrocks, ``Incremental update of datalog
+  materialisation: The backward/forward algorithm,'' in \emph{Proceedings of
+  the Twenty-Ninth AAAI Conference on Artificial Intelligence}.\hskip 1em plus
+  0.5em minus 0.4em\relax AAAI Press, 2015, pp. 1560--1568.
+
+\bibitem{souffle2016}
+B.~Scholz, H.~Jordan, P.~Suboti{\'c}, and T.~Westmann, ``On fast large-scale
+  program analysis in datalog,'' in \emph{Proceedings of the 25th International
+  Conference on Compiler Construction}.\hskip 1em plus 0.5em minus 0.4em\relax
+  ACM, 2016, pp. 196--206.
 
 \bibitem{murray2013naiad}
 D.~G. Murray, F.~McSherry, R.~Isaacs, M.~Isard, P.~Barham, and M.~Abadi,

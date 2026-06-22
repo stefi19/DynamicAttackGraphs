@@ -1,43 +1,37 @@
 // Attack graph rules implementation
-// Translates MulVAL-style Datalog rules into differential dataflow operators
+// ----------------------------------
+// This module implements the core logic that translates MulVAL-style
+// Datalog rules into differential-dataflow operators.  The overall
+// design decomposes the computation into strata (a common technique
+// when there is negation):
 //
-// STRATIFIED NEGATION:
-// Firewall rules use antijoin to implement "NOT blocked" semantics.
-// This is safe because firewall rules are base facts (stratum 0) and
-// effective_access is derived (stratum 1). The negation is stratified.
+//  - Stratum 0: Base facts (vulnerabilities, network rules, firewall)
+//  - Stratum 1: Effective network access (network edges minus denies)
+//  - Stratum 2: Recursive reachability (execCode) implemented with
+//    differential-dataflow's `iterate()` to compute a fixed point
+//  - Stratum 3: Ownership and goals derived from execCode
 //
-// CYCLE HANDLING:
-// The iterate() operator computes a fixed point. The distinct() call inside
-// ensures that each derived fact appears exactly once. When cycles try to
-// re-derive existing facts, the diff is 0 (+1 and -1 cancel), causing
-// termination. This is mathematically equivalent to semi-naive evaluation.
+// The code is intentionally explicit: it creates keyed collections
+// for joins, explains `enter()` for the iterative scope, and uses
+// `.distinct()` to ensure convergence of the fixed-point computation.
 
 use differential_dataflow::collection::Collection;
 use differential_dataflow::operators::iterate::Iterate;
-use differential_dataflow::operators::join::Join;
-use differential_dataflow::operators::reduce::Threshold;
+use differential_dataflow::operators::Join;
+use differential_dataflow::operators::Threshold;
 use timely::dataflow::Scope;
 
 use crate::schema::*;
 
-// Main function that builds the attack graph dataflow
-// Takes input collections and returns derived collections
-//
-// The dataflow implements these Datalog rules:
-//
-//   effectiveAccess(S, D, Svc) :-
-//       networkAccess(S, D, Svc),
-//       NOT firewallDeny(S, D, Svc).
-//
-//   execCode(A, H, P) :- attackerLocation(A, H, P).
-//   execCode(A, Dst, P) :-
-//       execCode(A, Src, _),
-//       effectiveAccess(Src, Dst, Svc),
-//       vulnerability(Dst, _, Svc, P).
-//
-//   ownsMachine(A, H) :- execCode(A, H, root).
-//   goalReached(A, T) :- attackerGoal(A, T), ownsMachine(A, T).
-//
+// ----------------------------------------------------------------
+// build_attack_graph
+// ----------------------------------------------------------------
+// Public function that wires the dataflow for attack graph
+// derivation.  It accepts several `Collection<G, T>` inputs (the raw
+// facts) and returns derived collections.  The generic parameter `G`
+// is the timely/differential scope (worker-local execution context).
+// The timestamp bound (`G::Timestamp: Lattice + Ord`) is required by
+// differential-dataflow for iterative computations.
 pub fn build_attack_graph<G>(
     vulnerability_collection: &Collection<G, VulnerabilityRecord>,
     network_access_collection: &Collection<G, NetworkAccessRule>,
@@ -127,8 +121,13 @@ where
         (route_key, rule)
     });
 
+    // 2) extract deny keys from firewall rules
     let blocked_route_keys = firewall_rules_collection
+        // Keep only explicit Deny rules; Allow rules are not used for
+        // negation here because the default behaviour is that the
+        // network rule permits unless denied.
         .filter(|rule| rule.rule_action == FirewallRuleAction::Deny)
+        // Map to the same key shape as the network rules
         .map(|rule| {
             (
                 rule.source_zone.clone(),
@@ -136,18 +135,31 @@ where
                 rule.service_name.clone(),
             )
         })
+        // distinct() removes duplicates and reduces work for the antijoin
         .distinct();
 
+    // 3) antijoin: keep network edges that are NOT present in blocked_route_keys
     let effective_network_access = network_access_keyed_by_route
         .antijoin(&blocked_route_keys)
+        // Restore the original structure but now only for effective edges
         .map(|(_, original_rule)| EffectiveNetworkAccess {
             source_host: original_rule.source_host,
             destination_host: original_rule.destination_host,
             service_name: original_rule.service_name,
         });
 
-    // STRATUM 2: Compute code execution with fixed-point iteration
-    // Base case: attacker starts at their initial location
+    // =========================================================================
+    // STRATUM 2: Recursive computation of execCode (reachability + exploitation)
+    // =========================================================================
+    // High-level rules implemented:
+    //   execCode(A,H,P) :- attackerLocation(A,H,P).
+    //   execCode(A,D,P) :- execCode(A,Src,_), effectiveAccess(Src,D,Svc), vulnerability(D,_,Svc,P).
+    // We implement this using `iterate()` which repeatedly applies the
+    // body until no new facts are produced (fixed point).  Inside the
+    // iterate scope we must `enter()` static collections so they are
+    // visible in the inner scope.
+
+    // Base case: where the attacker starts
     let initial_code_execution =
         attacker_positions_collection.map(|position| AttackerCodeExecution {
             attacker_id: position.attacker_id,
@@ -155,7 +167,7 @@ where
             obtained_privilege: position.initial_privilege,
         });
 
-    // Prepare indexed collections for efficient joins inside iteration
+    // Index effective access by source host to accelerate joins
     let access_indexed_by_source = effective_network_access.map(|access| {
         (
             access.source_host.clone(),
@@ -163,6 +175,7 @@ where
         )
     });
 
+    // Index vulnerabilities by (host, service) for efficient lookup
     let vulnerabilities_indexed_by_host_service = vulnerability_collection.map(|vuln| {
         (
             (vuln.host_name.clone(), vuln.affected_service.clone()),
@@ -263,11 +276,12 @@ where
         })
         .distinct();
 
-    // STRATUM 3: Check goal reachability
+    // Key owned machines by (attacker, host) for semijoin
     let owned_machine_keys = machines_owned_by_attackers
         .map(|owned| (owned.attacker_id.clone(), owned.owned_host.clone()))
         .distinct();
 
+    // Index goals by (attacker, target)
     let goals_keyed = attacker_goals_collection.map(|goal| {
         (
             (goal.attacker_id.clone(), goal.target_host_name.clone()),
@@ -275,6 +289,7 @@ where
         )
     });
 
+    // Semijoin goals with owned machines to produce reached goals
     let successfully_reached_goals =
         goals_keyed
             .semijoin(&owned_machine_keys)
@@ -283,7 +298,9 @@ where
                 reached_target: goal.target_host_name,
             });
 
-    // Consolidate to merge any duplicate diffs before output
+    // Consolidate the outputs: this merges multiple diff updates for
+    // the same value into a single diff and reduces noise for the
+    // consumers of the returned collections.
     (
         all_code_executions.consolidate(),
         machines_owned_by_attackers.consolidate(),
@@ -291,8 +308,13 @@ where
     )
 }
 
-// Alternative version with bounded iteration depth
-// Useful when you want to limit how many hops the attacker can make
+// ----------------------------------------------------------------
+// build_attack_graph_with_max_hops
+// ----------------------------------------------------------------
+// An alternative non-iterative implementation that expands the
+// attacker's reach up to `maximum_attack_hops`.  This is useful for
+// experiments where you want an explicit bound on attacker depth or
+// when the underlying iterative engine is not desired.
 pub fn build_attack_graph_with_max_hops<G>(
     vulnerability_collection: &Collection<G, VulnerabilityRecord>,
     network_access_collection: &Collection<G, NetworkAccessRule>,
@@ -308,7 +330,7 @@ where
     G: Scope,
     G::Timestamp: differential_dataflow::lattice::Lattice + Ord,
 {
-    // Start with initial attacker positions
+    // Initialize with attacker starting positions
     let mut current_code_executions =
         attacker_positions_collection.map(|position| AttackerCodeExecution {
             attacker_id: position.attacker_id,
@@ -316,7 +338,7 @@ where
             obtained_privilege: position.initial_privilege,
         });
 
-    // Prepare indexed collections for joins
+    // Index network access and vulnerabilities similarly to above
     let network_access_by_source = network_access_collection.map(|access| {
         (
             access.source_host.clone(),
@@ -331,7 +353,7 @@ where
         )
     });
 
-    // Expand attack graph for each hop
+    // Iteratively expand the frontier up to the maximum hop count
     for _hop_number in 0..maximum_attack_hops {
         let new_executions_this_hop = current_code_executions
             .map(|execution| {
@@ -353,12 +375,15 @@ where
                 },
             );
 
+        // Combine the newly discovered facts with the existing ones and
+        // deduplicate to avoid re-propagating the same facts across
+        // iterations of this loop.
         current_code_executions = current_code_executions
             .concat(&new_executions_this_hop)
             .distinct();
     }
 
-    // Compute owned machines
+    // Same ownership/goal extraction as in the iterative version
     let machines_owned = current_code_executions
         .filter(|execution| execution.obtained_privilege == PrivilegeLevel::Root)
         .map(|execution| AttackerOwnsMachine {
@@ -367,7 +392,6 @@ where
         })
         .distinct();
 
-    // Check if goals are reached
     let owned_keys = machines_owned
         .map(|owned| (owned.attacker_id.clone(), owned.owned_host.clone()))
         .distinct();

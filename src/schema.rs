@@ -1,23 +1,44 @@
-// Schema for attack graph data types
-// Defines all the structures needed to represent network security facts
+// ================================================================
+// schema.rs
+//
+// This module contains all data types (the "schema") used by the
+// Dynamic Attack Graphs project.  The types represent both input
+// facts (vulnerabilities, network rules, firewall rules, attacker
+// start/goal) and derived facts (effective access, compromises,
+// ownership, goal reached).  These types are passed through
+// differential-dataflow collections and therefore need to be
+// cheaply serializable / comparable / hashable.
+// ================================================================
 
-use abomonation_derive::Abomonation;
+use abomonation_derive::Abomonation; // fast binary (de)serialization
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-// Type aliases for better readability
-pub type HostIdentifier = String;
-pub type ServiceName = String;
-pub type VulnerabilityIdentifier = String;
-pub type AttackerIdentifier = String;
+// ----------------------------------------------------------------
+// Type aliases
+// ----------------------------------------------------------------
+pub type HostIdentifier = String; // e.g. "webserver-1"
+pub type ServiceName = String; // e.g. "ssh", "http"
+pub type VulnerabilityIdentifier = String; // e.g. "CVE-2024-12345"
+pub type AttackerIdentifier = String; // e.g. "internet", "attacker-1"
 
-// Privilege levels that can be obtained on a system
+// ----------------------------------------------------------------
+// Privilege levels
+// ----------------------------------------------------------------
+// Represents the privilege an attacker gains when exploiting a
+// vulnerability.  We implement `Display` for nicer logs.  We derive
+// the standard traits used by differential-dataflow: ordering,
+// hashing, cloning, and `Abomonation` for fast transfers between
+// workers.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
 pub enum PrivilegeLevel {
+    // No privilege gained (placeholder; may be unused in practice)
     None,
+    // Regular user privileges (low-level access)
     User,
+    // Administrator / root privileges (full control)
     Root,
 }
 
@@ -31,7 +52,13 @@ impl fmt::Display for PrivilegeLevel {
     }
 }
 
-// What a firewall rule does
+// ----------------------------------------------------------------
+// Firewall rule action
+// ----------------------------------------------------------------
+// Simple enum to represent whether a firewall rule allows or denies
+// traffic.  When building `EffectiveNetworkAccess` we will remove
+// any NetworkAccess entries that match a `Deny` rule using an
+// anti-join.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
@@ -40,23 +67,35 @@ pub enum FirewallRuleAction {
     Deny,
 }
 
-// ----------------------------------
-// Base facts (input data)
-// ----------------------------------
+// ----------------------------------------------------------------
+// Base facts (inputs)
+// ----------------------------------------------------------------
+// The following structs model the raw facts that are inserted into
+// the system by scanners, configuration, or operator inputs.  They
+// correspond closely to predicates in MulVAL-style Datalog (e.g.
+// `vulExists`, `hacl`, `attackerLocated`).
 
-// A vulnerability that exists on a specific host
-// Similar to MulVAL's vulExists predicate
+// A vulnerability observed on a host.  This maps to
+// `vulExists(Host, CVE, Service, Priv)` in the MulVAL notation used
+// in the paper.  The struct fields are public because they are used
+// directly in differential-dataflow mapping and joining operations.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
 pub struct VulnerabilityRecord {
+    // Host that has the vulnerability
     pub host_name: HostIdentifier,
+    // The vulnerability identifier (CVE or internal tracker)
     pub vulnerability_id: VulnerabilityIdentifier,
+    // Network service affected by this vulnerability (e.g. "ssh")
     pub affected_service: ServiceName,
+    // The privilege level the attacker obtains when exploiting
     pub privilege_gained_on_exploit: PrivilegeLevel,
 }
 
 impl VulnerabilityRecord {
+    // Convenience constructor to avoid repeated `.to_string()` calls
+    // at call sites.  This keeps tests and examples concise.
     pub fn new(
         host_name: &str,
         vulnerability_id: &str,
@@ -94,8 +133,12 @@ impl LocalVulnerabilityRecord {
     }
 }
 
-// Network connection between two hosts
-// Similar to MulVAL's hacl predicate
+// Network connectivity / access rule.  This represents that traffic
+// from `source_host` can reach `destination_host` on `service_name`.
+// In MulVAL this would be `hacl(Src, Dst, Service)`.  Note that the
+// presence of a NetworkAccessRule does not mean traffic is actually
+// allowed - firewall rules can block it.  Effective access is
+// computed later by combining these facts with firewall rules.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
@@ -106,6 +149,8 @@ pub struct NetworkAccessRule {
 }
 
 impl NetworkAccessRule {
+    // Small helper constructor; used by examples and tests to keep
+    // call sites readable.
     pub fn new(source: &str, destination: &str, service: &str) -> Self {
         Self {
             source_host: source.to_string(),
@@ -115,11 +160,19 @@ impl NetworkAccessRule {
     }
 }
 
-// A firewall rule that blocks or allows traffic
+// Firewall rule record.  This models explicit allow/deny rules in an
+// ACL or firewall.  The `rule_action` field controls whether traffic
+// is permitted.  When composing the dataflow we will typically
+// transform `FirewallRuleRecord` into a keyed collection of denies
+// to be antijoined against the network rules (i.e. remove any
+// network edges that are explicitly denied).
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
 pub struct FirewallRuleRecord {
+    // The origin or zone that the rule applies to (could be an IP,
+    // a host name, or a logical zone name).  We use HostIdentifier
+    // for simplicity in the PoC.
     pub source_zone: HostIdentifier,
     pub destination_host: HostIdentifier,
     pub service_name: ServiceName,
@@ -127,6 +180,7 @@ pub struct FirewallRuleRecord {
 }
 
 impl FirewallRuleRecord {
+    // Helper to create a deny rule quickly in examples/benchmarks.
     pub fn create_deny_rule(source: &str, destination: &str, service: &str) -> Self {
         Self {
             source_zone: source.to_string(),
@@ -137,7 +191,10 @@ impl FirewallRuleRecord {
     }
 }
 
-// Where the attacker starts from
+// Attacker's initial / starting position.  This corresponds to the
+// MulVAL `attackerLocated` fact and includes the initial privilege
+// the attacker already possesses (for example, an inside attacker
+// might already have 'User' privileges on a host).
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
@@ -157,7 +214,8 @@ impl AttackerStartingPosition {
     }
 }
 
-// What the attacker wants to compromise
+// The attacker's goal: which host they wish to compromise.  This is
+// used by the evaluation to check whether a target was reached.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
@@ -175,11 +233,14 @@ impl AttackerTargetGoal {
     }
 }
 
-// ----------------------------------
-// Derived facts (computed by rules)
-// ----------------------------------
+// ----------------------------------------------------------------
+// Derived facts (outputs of the dataflow)
+// ----------------------------------------------------------------
+// These structs represent derived/derived facts that the dataflow
+// computes from the base facts using joins, antijoins and iteration.
 
-// Network access after applying firewall rules
+// Effective network access represents the network edges that are
+// actually usable by an attacker after applying firewall denies.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
@@ -189,8 +250,8 @@ pub struct EffectiveNetworkAccess {
     pub service_name: ServiceName,
 }
 
-// Attacker can execute code on a host
-// Similar to MulVAL's execCode predicate
+// execCode: attacker can execute code on host with some privilege.
+// This is the central derived predicate of MulVAL-style analysis.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
@@ -202,6 +263,7 @@ pub struct AttackerCodeExecution {
 
 impl fmt::Display for AttackerCodeExecution {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Nice human-readable printing for logs and debugging
         write!(
             formatter,
             "execCode({}, {}, {})",
@@ -210,7 +272,9 @@ impl fmt::Display for AttackerCodeExecution {
     }
 }
 
-// Attacker has full control of a machine (root access)
+// ownsMachine: a convenience derived fact when the attacker has
+// Root on a host.  Useful for goal checking and for generating
+// alerts in examples.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
@@ -229,7 +293,9 @@ impl fmt::Display for AttackerOwnsMachine {
     }
 }
 
-// Attacker has reached their target
+// goalReached: indicates the attacker successfully reached their
+// declared goal.  This is computed by semijoining the goal list with
+// the set of owned machines.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Abomonation, Serialize, Deserialize,
 )]
@@ -248,10 +314,12 @@ impl fmt::Display for AttackerGoalReached {
     }
 }
 
-// ----------------------------------
-// Key types for join operations
-// ----------------------------------
-
+// ----------------------------------------------------------------
+// Key types for joins
+// ----------------------------------------------------------------
+// These tuple aliases document the shapes used when creating keyed
+// collections for joins and semijoins inside the dataflow.  Using
+// aliases reduces duplication and clarifies intent at join sites.
 pub type AttackerAndHostKey = (AttackerIdentifier, HostIdentifier);
 pub type NetworkAccessKey = (HostIdentifier, HostIdentifier, ServiceName);
 pub type HostAndServiceKey = (HostIdentifier, ServiceName);

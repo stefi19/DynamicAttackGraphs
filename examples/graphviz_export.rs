@@ -28,7 +28,7 @@ struct AttackGraphState {
 impl AttackGraphState {
     fn export_to_dot(&self, filename: &str, title: &str) -> std::io::Result<()> {
         let mut file = File::create(filename)?;
-        
+
         writeln!(file, "digraph AttackGraph {{")?;
         writeln!(file, "    label=\"{}\";", title)?;
         writeln!(file, "    labelloc=\"t\";")?;
@@ -36,7 +36,7 @@ impl AttackGraphState {
         writeln!(file, "    rankdir=LR;")?;
         writeln!(file, "    node [shape=box, style=filled];")?;
         writeln!(file)?;
-        
+
         // Define node styles
         for node in &self.nodes {
             let (color, label_suffix) = if node == &self.attacker_start {
@@ -52,12 +52,15 @@ impl AttackGraphState {
             } else {
                 ("white", "")
             };
-            
-            writeln!(file, "    \"{}\" [fillcolor={}, label=\"{}{}\"];", 
-                     node, color, node, label_suffix)?;
+
+            writeln!(
+                file,
+                "    \"{}\" [fillcolor={}, label=\"{}{}\"];",
+                node, color, node, label_suffix
+            )?;
         }
         writeln!(file)?;
-        
+
         // Define edges with attack path highlighting
         for (src, dst, service) in &self.edges {
             let is_attack_path = self.compromised.contains(src) && self.compromised.contains(dst);
@@ -66,13 +69,16 @@ impl AttackGraphState {
             } else {
                 ("black", "1.0")
             };
-            
-            writeln!(file, "    \"{}\" -> \"{}\" [label=\"{}\", color={}, penwidth={}];",
-                     src, dst, service, color, penwidth)?;
+
+            writeln!(
+                file,
+                "    \"{}\" -> \"{}\" [label=\"{}\", color={}, penwidth={}];",
+                src, dst, service, color, penwidth
+            )?;
         }
-        
+
         writeln!(file, "}}")?;
-        
+
         println!("Exported: {}", filename);
         Ok(())
     }
@@ -93,85 +99,86 @@ fn main() {
         let compromised_nodes = Arc::new(Mutex::new(HashSet::<String>::new()));
         let compromised_clone = Arc::clone(&compromised_nodes);
 
-        let (mut vuln_input, mut network_input, mut attacker_input) = 
-            worker.dataflow::<usize, _, _>(|scope| {
-            
-            // Vulnerability: (host, service, is_root)
-            let (vuln_handle, vulns) = scope.new_collection::<(String, String, bool), isize>();
-            
-            // Network: (src, dst, service)
-            let (net_handle, network) = scope.new_collection::<(String, String, String), isize>();
-            
-            // Attacker: (attacker_id, host)
-            let (att_handle, attacker) = scope.new_collection::<(String, String), isize>();
+        let (mut vuln_input, mut network_input, mut attacker_input) = worker
+            .dataflow::<usize, _, _>(|scope| {
+                // Vulnerability: (host, service, is_root)
+                let (vuln_handle, vulns) = scope.new_collection::<(String, String, bool), isize>();
 
-            // Compute reachability
-            let reachable = attacker.iterate(|inner| {
-                let net_in_scope = network.enter(&inner.scope());
-                let vulns_in_scope = vulns.enter(&inner.scope())
-                    .map(|(h, s, _)| (h, s))
-                    .distinct();
+                // Network: (src, dst, service)
+                let (net_handle, network) =
+                    scope.new_collection::<(String, String, String), isize>();
 
-                inner
-                    .map(|(att, host)| (host, att))
-                    .join(&net_in_scope.map(|(s, d, svc)| (s, (d, svc))))
-                    .map(|(_, (att, (dst, svc)))| ((dst.clone(), svc), (att, dst)))
-                    .semijoin(&vulns_in_scope)
-                    .map(|((_, _), (att, dst))| (att, dst))
-                    .concat(inner)
-                    .distinct()
+                // Attacker: (attacker_id, host)
+                let (att_handle, attacker) = scope.new_collection::<(String, String), isize>();
+
+                // Compute reachability
+                let reachable = attacker.iterate(|inner| {
+                    let net_in_scope = network.enter(&inner.scope());
+                    let vulns_in_scope = vulns
+                        .enter(&inner.scope())
+                        .map(|(h, s, _)| (h, s))
+                        .distinct();
+
+                    inner
+                        .map(|(att, host)| (host, att))
+                        .join(&net_in_scope.map(|(s, d, svc)| (s, (d, svc))))
+                        .map(|(_, (att, (dst, svc)))| ((dst.clone(), svc), (att, dst)))
+                        .semijoin(&vulns_in_scope)
+                        .map(|((_, _), (att, dst))| (att, dst))
+                        .concat(inner)
+                        .distinct()
+                });
+
+                // Track compromised nodes
+                let compromised_for_inspect = compromised_clone;
+                reachable
+                    .inspect(move |((_, host), _, diff)| {
+                        let mut set = compromised_for_inspect.lock().unwrap();
+                        if *diff > 0 {
+                            set.insert(host.clone());
+                        } else {
+                            set.remove(host);
+                        }
+                    })
+                    .probe_with(&mut probe);
+
+                (vuln_handle, net_handle, att_handle)
             });
-
-            // Track compromised nodes
-            let compromised_for_inspect = compromised_clone;
-            reachable
-                .inspect(move |((_, host), _, diff)| {
-                    let mut set = compromised_for_inspect.lock().unwrap();
-                    if *diff > 0 {
-                        set.insert(host.clone());
-                    } else {
-                        set.remove(host);
-                    }
-                })
-                .probe_with(&mut probe);
-
-            (vuln_handle, net_handle, att_handle)
-        });
 
         // =====================================================
         // Build a 10-node chain network for visualization
         // =====================================================
         // Network: attacker -> node_0 -> node_1 -> ... -> node_8 -> target
-        
+
         let num_nodes = 10;
         let mut nodes = HashSet::new();
         let mut edges = HashSet::new();
-        
+
         // Attacker starting point
         nodes.insert("attacker".to_string());
         attacker_input.insert(("eve".into(), "attacker".into()));
         vuln_input.insert(("attacker".into(), "ssh".into(), true));
-        
+
         // Chain of nodes
         let mut prev = "attacker".to_string();
         for i in 0..num_nodes - 1 {
             let current = format!("node_{}", i);
             nodes.insert(current.clone());
-            
+
             network_input.insert((prev.clone(), current.clone(), "ssh".into()));
             edges.insert((prev.clone(), current.clone(), "ssh".to_string()));
-            
+
             vuln_input.insert((current.clone(), "ssh".into(), true));
             prev = current;
         }
-        
+
         // Target node
         let target = "target".to_string();
         nodes.insert(target.clone());
         network_input.insert((prev.clone(), target.clone(), "ssh".into()));
         edges.insert((prev.clone(), target.clone(), "ssh".to_string()));
         vuln_input.insert((target.clone(), "ssh".into(), true));
-        
+
         // Setup initial graph state
         {
             let mut state = graph_state_clone.lock().unwrap();
@@ -197,19 +204,26 @@ fn main() {
         {
             let mut state = graph_state_clone.lock().unwrap();
             state.compromised = compromised_nodes.lock().unwrap().clone();
-            state.export_to_dot("graph_initial.dot", 
-                "Initial Attack Graph - All nodes compromised").unwrap();
+            state
+                .export_to_dot(
+                    "graph_initial.dot",
+                    "Initial Attack Graph - All nodes compromised",
+                )
+                .unwrap();
         }
-        
-        println!("\nInitial state: Attacker can reach all {} nodes including TARGET\n", num_nodes);
+
+        println!(
+            "\nInitial state: Attacker can reach all {} nodes including TARGET\n",
+            num_nodes
+        );
 
         // =====================================================
         // PATCH: Remove vulnerability at node_4 (middle of chain)
         // =====================================================
         println!("Applying patch: Removing vulnerability at node_4...\n");
-        
+
         vuln_input.remove(("node_4".into(), "ssh".into(), true));
-        
+
         vuln_input.advance_to(2);
         network_input.advance_to(2);
         attacker_input.advance_to(2);
@@ -225,13 +239,19 @@ fn main() {
         {
             let mut state = graph_state_clone.lock().unwrap();
             state.compromised = compromised_nodes.lock().unwrap().clone();
-            state.export_to_dot("graph_final.dot", 
-                "After Patching node_4 - Attack path broken").unwrap();
+            state
+                .export_to_dot(
+                    "graph_final.dot",
+                    "After Patching node_4 - Attack path broken",
+                )
+                .unwrap();
         }
-        
+
         let final_compromised = compromised_nodes.lock().unwrap().len();
-        println!("After patch: Attacker can only reach {} nodes (node_4 to target are safe)\n", 
-                 final_compromised);
+        println!(
+            "After patch: Attacker can only reach {} nodes (node_4 to target are safe)\n",
+            final_compromised
+        );
     });
 
     println!("=================================================");

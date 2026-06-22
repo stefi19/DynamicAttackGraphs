@@ -1,0 +1,44 @@
+% One-page A4 summary extracted from presentation speaker notes
+\documentclass[a4paper,11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{parskip}
+\usepackage{hyperref}
+\geometry{margin=1in}
+
+\begin{document}
+\begin{center}
+  {\LARGE Dynamic Attack Graphs: Incremental Re-computation with Differential Dataflow}\\[6pt]
+  {\large Stefania‑Cristina Mozacu; Emil C. Lupu}\\[12pt]
+\end{center}
+
+\section*{Executive summary}
+This study implements a proof-of-concept system for incremental recomputation of attack graphs using the Timely + Differential Dataflow Rust libraries. Input facts (vulnerabilities, network edges, firewalls, attacker positions, goals) are translated into keyed collections and derived facts are computed using joins, antijoins, and iterative fixed-point computation. The approach reduces update cost for local changes in shallow topologies (star) while worst-case chain-like dependencies remain costly.
+
+\section*{Key components}
+\begin{itemize}
+\item Data model: \texttt{VulnerabilityRecord}, \texttt{NetworkAccessRule}, \texttt{FirewallRuleRecord}, \texttt{AttackerStartingPosition}, \texttt{AttackerTargetGoal}
+\item Derived facts: \texttt{EffectiveNetworkAccess}, \texttt{AttackerCodeExecution}, \texttt{AttackerOwnsMachine}, \texttt{AttackerGoalReached}
+\item Operators: \texttt{antijoin} (for denies), \texttt{iterate} (recursion), \texttt{distinct} (deduplication)
+\end{itemize}
+
+\section*{Benchmarks (summary)}
+Topologies: star, chain, random-cut on chain. Metrics: initial full recomputation time, incremental update time, and speedup. Representative outcome: star topology shows large speedups; chain shows marginal improvements for cuts near the head.
+
+\section*{Reproducibility}
+Place the Graphviz images (\texttt{graph_initial.png}, \texttt{graph_final.png}) in the project root's working directory. Key commands:
+\begin{verbatim}
+cargo build --release
+cargo run --release --bin attack-graph
+dot -Tpng graph_initial.dot -o graph_initial.png
+docker build -t attack-graph .
+docker run --rm attack-graph
+\end{verbatim}
+
+\section*{Next steps}
+Scaling to multiple workers, integrating real vulnerability scanner output, and applying the approach to real network topologies.
+
+\section*{Location of code}
+See the repository root. Key files: \texttt{src/rules.rs}, \texttt{src/benchmarks.rs}, \texttt{Dockerfile}, \texttt{graph_initial.dot}
+
+\end{document}

@@ -1,0 +1,260 @@
+% Beamer presentation for Dynamic Attack Graphs using Differential Dataflow
+% Generated automatically from project notes. Replace image placeholders and
+% optionally fill benchmark tables with measured numbers before compiling.
+\documentclass[professionalfonts]{beamer}
+\usetheme{Madrid}
+\usecolortheme{seagull}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{tikz}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{caption}[numbered]
+\setbeamertemplate{footline}[frame number]
+
+% Speaker notes on second screen/printout
+\setbeameroption{show notes}
+
+\title[Dynamic Attack Graphs]{Dynamic Attack Graphs: Incremental Re-computation with Differential Dataflow}
+\author{Stefania‑Cristina Mozacu \and Emil C. Lupu}
+\institute{\small Department / Affiliation}
+\date{\small May 2026}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+  \note{This presentation summarises a proof-of-concept implementation of dynamic attack graphs using differential dataflow.}
+\end{frame}
+
+\begin{frame}{Executive summary}
+  \begin{itemize}
+    \item Problem: full recomputation of attack graphs is costly for live networks
+    \item Approach: use differential dataflow (Timely) to incrementally update derived facts
+    \item Artifacts: Rust implementation, benchmarks (chain/star/random cut), Graphviz visualisations
+    \item Results: large speedups on star/topologies; position-dependent cost on chain
+  \end{itemize}
+  \note{Give a brief overview: problem, technique, implementation, and headline results.}
+\end{frame}
+
+\begin{frame}{Motivation}
+  \begin{itemize}
+    \item Attack graphs summarise attacker reachability using facts and rules
+    \item Modern networks are dynamic: CVEs, patches, topology changes
+    \item Recomputing the entire graph on every change is impractical at scale
+  \end{itemize}
+  \note{Give examples where rapid updates are needed: patch management, red-team, live monitoring.}
+\end{frame}
+
+\begin{frame}{Background: attack graphs and MulVAL}
+  \begin{itemize}
+    \item Attack graphs: facts (vulnerabilities, network edges, firewall rules) and inference rules
+    \item MulVAL uses Datalog-like rules to compute derived reachability facts
+    \item Example rule (informal): execCode(A,D,P) :- execCode(A,Src,_), effectiveAccess(Src,D,Svc), vulnerability(D,_,Svc,P)
+  \end{itemize}
+  \note{Explain the Datalog style rules and how they map to joins and recursive definitions.}
+\end{frame}
+
+\begin{frame}{Background: differential dataflow}
+  \begin{itemize}
+    \item Differential dataflow propagates deltas and supports iterative fixed-point computation
+    \item Operators: join, antijoin, iterate, distinct, consolidate
+    \item Natural fit for incremental Datalog: update deltas, recompute only affected facts
+  \end{itemize}
+  \note{Highlight why iterate() + distinct() yields termination and how antijoin handles negation (firewall denies).}
+\end{frame}
+
+\begin{frame}{System overview}
+  \centering
+  \includegraphics[width=0.85\linewidth]{graph_initial.png}
+  \note{High-level pipeline: inputs (vulns, network, firewall, positions, goals) flow into the differential pipeline producing execCode, ownsMachine, goalsReached.}
+\end{frame}
+
+\begin{frame}{Data model (facts)}
+  \begin{itemize}
+    \item Input facts: \texttt{VulnerabilityRecord(host, cve, service, privilege)}
+    \item \texttt{NetworkAccessRule(src, dst, service)}
+    \item \texttt{FirewallRuleRecord(src, dst, service, action)}
+    \item \texttt{AttackerStartingPosition(attacker, host, privilege)}
+    \item \texttt{AttackerTargetGoal(attacker, target)}
+  \end{itemize}
+  \note{Walk through the shapes of these records and the rationale for fields.}
+\end{frame}
+
+\begin{frame}{Derived facts and rules}
+  \begin{itemize}
+    \item \texttt{EffectiveNetworkAccess(src,dst,svc)} = network \textbf{ANTIJOIN} denies
+    \item \texttt{AttackerCodeExecution(attacker,host,priv)} formed by recursion via \texttt{iterate()}
+    \item \texttt{AttackerOwnsMachine(attacker,host)} when \texttt{priv==Root}
+    \item \texttt{AttackerGoalReached(attacker,target)} via semijoin on owned machines
+  \end{itemize}
+  \note{Explicitly connect each derived fact to the operator chain used in the code.}
+\end{frame}
+
+\begin{frame}{Translating rules to dataflow (example)}
+  \begin{itemize}
+    \item effectiveAccess = network_rules.antijoin(deny_keys)
+    \item execCode: iterate over current execCode; join with access (by src); join with vulnerabilities (by host,service); concat + distinct
+  \end{itemize}
+  \note{Show how join keys are chosen and why distinct() is necessary to ensure termination.}
+\end{frame}
+
+\begin{frame}{Implementation details}
+  \begin{itemize}
+    \item Language: Rust
+    \item Libraries: timely, differential_dataflow, abomonation (fast transfer)
+    \item Important functions: \texttt{build_attack_graph}, \texttt{build_attack_graph_with_max_hops}
+    \item Single-worker benchmarks via \texttt{timely::execute_directly} for reproducibility
+  \end{itemize}
+  \note{Mention reasons for Rust choice (performance, control) and abomonation for serialization performance across workers.}
+\end{frame}
+
+\begin{frame}{Visualization and export}
+  \begin{itemize}
+    \item Graph export: DOT nodes/edges from derived facts
+    \item Use Graphviz to render: \texttt{dot -Tpng graph_initial.dot -o graph_initial.png}
+    \item Visual conventions: compromised hosts, attacker start, goal highlighted
+  \end{itemize}
+  \note{Explain how the exported graphs are used to illustrate the effect of patches.}
+\end{frame}
+
+\begin{frame}{Benchmarks: setup}
+  \begin{itemize}
+    \item Topologies: chain, star, mesh; synthetic vulnerabilities
+    \item Metrics: initial full recomputation time, incremental update time, speedup
+    \item Repeatable: deterministic generators, fixed seeds, single-worker execution
+  \end{itemize}
+  \note{Explain why each topology was chosen to highlight different behaviors.}
+\end{frame}
+
+\begin{frame}{Star topology: results (example)}
+  \begin{table}
+    \centering
+    \begin{tabular}{r r r r}
+      \toprule
+      Nodes & Initial (ms) & Incremental (ms) & Speedup \\
+      \midrule
+      100 & 12.1 & 0.02 & 605x \\
+      1000 & 39.0 & 0.13 & 300x \\
+      5000 & 210 & 0.9 & 233x \\
+      \bottomrule
+    \end{tabular}
+    \caption{Sample star topology timings (replace with measured numbers).}
+  \end{table}
+  \note{Interpretation: incremental updates are effectively constant time due to low depth.}
+\end{frame}
+
+\begin{frame}{Chain topology: results (example)}
+  \begin{table}
+    \centering
+    \begin{tabular}{r r r r}
+      \toprule
+      Nodes & Initial (ms) & Incremental (ms) & Speedup \\
+      \midrule
+      100 & 9.0 & 4.2 & 2.1x \\
+      1000 & 95.0 & 62.0 & 1.5x \\
+      5000 & 450 & 400 & 1.1x \\
+      \bottomrule
+    \end{tabular}
+    \caption{Sample chain topology timings (replace with measured numbers).}
+  \end{table}
+  \note{Interpretation: chain is worst-case for cuts near the head.}
+\end{frame}
+
+\begin{frame}{Random-cut experiment (chain)}
+  \centering
+  \includegraphics[width=0.85\linewidth]{graph_final.png}
+  \note{Scatter plot of incremental update time vs cut position: cost drops as cut position moves towards chain end.}
+\end{frame}
+
+\begin{frame}{Statistical analysis}
+  \begin{itemize}
+    \item RQ1: median speedup across topologies (report numbers)
+    \item RQ2: regression of initial time vs N (O(N) observed) and incremental vs N (depend on topology)
+    \item RQ3: cut position strongly correlates with incremental cost (report R^2)
+  \end{itemize}
+  \note{Include brief statistical method notes (paired tests, regression models).}
+\end{frame}
+
+\begin{frame}{Discussion}
+  \begin{itemize}
+    \item Incremental approach highly effective for shallow, star-like topologies
+    \item Less beneficial for deep chain-like dependencies or global changes
+    \item Suggest hybrid strategies for real deployments
+  \end{itemize}
+  \note{Link to operational implications: alert triage, live patching, selective recomputation.}
+\end{frame}
+
+\begin{frame}{Limitations and future work}
+  \begin{itemize}
+    \item Synthetic topologies; need real network datasets
+    \item Single-worker benchmarks; evaluate multi-worker scaling
+    \item Extend vulnerability modelling and integrate scanners
+  \end{itemize}
+  \note{Propose immediate next steps and potential thesis work.}
+\end{frame}
+
+\begin{frame}{Reproducibility and commands}
+  \begin{itemize}
+    \item Build: \texttt{cargo build --release}
+    \item Run benchmarks: \texttt{cargo run --release --bin attack-graph}
+    \item Render graphs: \texttt{dot -Tpng graph_initial.dot -o graph_initial.png}
+    \item Docker: \texttt{docker build -t attack-graph . && docker run --rm attack-graph}
+  \end{itemize}
+  \note{List file locations: \texttt{src/benchmarks.rs}, \texttt{src/rules.rs}, \texttt{graph_initial.dot}.}
+\end{frame}
+
+\begin{frame}{Demo visual walkthrough}
+  \begin{columns}
+    \column{0.5\textwidth}
+      \centering
+      \includegraphics[width=0.95\linewidth]{graph_initial.png}
+      \captionof{figure}{Before patch}
+    \column{0.5\textwidth}
+      \centering
+      \includegraphics[width=0.95\linewidth]{graph_final.png}
+      \captionof{figure}{After patch}
+  \end{columns}
+  \note{Describe the visual change: removed attack path, nodes recoloured to show compromised hosts.}
+\end{frame}
+
+\begin{frame}{Related work}
+  \begin{itemize}
+    \item MulVAL and Datalog-based attack graphs
+    \item Differential Dataflow (Naiad lineage) and incremental Datalog work
+    \item Incremental program analysis and streaming graph processing
+  \end{itemize}
+  \note{Position our contributions against these works.}
+\end{frame}
+
+\begin{frame}{Conclusion}
+  \begin{itemize}
+    \item Demonstrated incremental recomputation with differential dataflow for attack graphs
+    \item Showed large speedups in common topologies and characterized worst-cases
+    \item Path forward: multi-worker scaling, real datasets, CVE semantics
+  \end{itemize}
+  \note{Concise closing remarks and invitation for questions.}
+\end{frame}
+
+\begin{frame}{Appendix: exact commands and file locations}
+  \small
+  \begin{verbatim}
+  # Build
+  cargo build --release
+
+  # Run benchmarks (example)
+  cargo run --release --bin attack-graph
+
+  # Render graphs
+  dot -Tpng graph_initial.dot -o graph_initial.png
+
+  # Docker
+  docker build -t attack-graph .
+  docker run --rm attack-graph
+  \end{verbatim}
+  \note{Provide GitHub repo URL and pointer to Dockerfile in project root.}
+\end{frame}
+
+\end{document}
