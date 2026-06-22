@@ -20,7 +20,8 @@ figures on the target machine before reporting final results.
 
 The script runs formatting, tests, build validation, Graphviz examples,
 benchmark CSV export, benchmark plotting, paper compilation, and website asset
-copying.
+copying. The website is a standalone project presentation and does not embed or
+copy the paper PDF.
 
 ## Regenerate Benchmark CSV
 
@@ -75,4 +76,4 @@ open http://localhost:8000/website/
 ```
 
 The website is static and requires no backend. It expects generated images and
-the compiled PDF under `website/assets/`.
+benchmark CSV files under `website/assets/`; it does not link to the paper PDF.

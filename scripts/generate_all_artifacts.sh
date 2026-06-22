@@ -74,7 +74,6 @@ if [ ! -f paper/main.pdf ]; then
   exit 1
 fi
 
-cp paper/main.pdf website/assets/main.pdf
 if [ ! -f website/index.html ]; then
   echo "Expected website/index.html is missing." >&2
   exit 1

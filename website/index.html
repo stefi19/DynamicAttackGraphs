@@ -10,11 +10,20 @@
     <header class="site-header">
       <a class="brand" href="#top">DynamicAttackGraphs</a>
       <nav class="nav" aria-label="Main navigation">
+        <a href="#top">Overview</a>
         <a href="#problem">Problem</a>
+        <a href="#background">Background</a>
+        <a href="#differential">Differential Dataflow</a>
         <a href="#architecture">Architecture</a>
+        <a href="#rules">Rule Translation</a>
+        <a href="#walkthrough">Incremental Updates</a>
         <a href="#correctness">Correctness</a>
+        <a href="#provenance">Provenance</a>
         <a href="#benchmarks">Benchmarks</a>
-        <a href="#paper">Paper</a>
+        <a href="#extensions">Research Extensions</a>
+        <a href="#limitations">Limitations</a>
+        <a href="#reproduce">Reproducibility</a>
+        <a href="#future">Future Work</a>
       </nav>
     </header>
 
@@ -30,7 +39,7 @@
             differences through a recursive dataflow computation.
           </p>
           <div class="hero-actions">
-            <a class="button primary" href="assets/main.pdf">Read the paper</a>
+            <a class="button primary" href="#architecture">Explore architecture</a>
             <a class="button" href="#benchmarks">View benchmarks</a>
             <a class="button" href="#provenance">See provenance</a>
             <a class="button" href="#reproduce">Reproduce results</a>
@@ -134,6 +143,38 @@
           <article><strong>metrics.rs</strong><span>affected-region diff metrics</span></article>
           <article><strong>provenance.rs</strong><span>selected proof reconstruction</span></article>
           <article><strong>benchmarks.rs</strong><span>synthetic benchmark scenarios</span></article>
+        </div>
+      </section>
+
+      <section id="rules" class="section">
+        <p class="eyebrow">Rule Translation</p>
+        <h2>From Datalog Rules to Dataflow Operators</h2>
+        <div class="grid two">
+          <article class="card">
+            <h3>Logical shape</h3>
+            <p>
+              A remote exploit requires existing code execution on a source,
+              effective network reachability to the destination service, and a
+              matching vulnerability on the destination host.
+            </p>
+            <pre><code>execCode(A, Dst, P) :-
+  execCode(A, Src, _),
+  effectiveAccess(Src, Dst, Svc),
+  vulExists(Dst, _, Svc, P).</code></pre>
+          </article>
+          <article class="card">
+            <h3>Operator mapping</h3>
+            <table>
+              <tbody>
+                <tr><td>Conjunction</td><td>keyed join</td></tr>
+                <tr><td>Projection</td><td>map</td></tr>
+                <tr><td>Selection</td><td>filter</td></tr>
+                <tr><td>Recursion</td><td>iterate</td></tr>
+                <tr><td>Firewall negation</td><td>antijoin</td></tr>
+                <tr><td>Duplicate facts</td><td>distinct</td></tr>
+              </tbody>
+            </table>
+          </article>
         </div>
       </section>
 
@@ -245,7 +286,52 @@ firewallDeny(internet, web01, https).</code></pre>
           <figure><img src="assets/chain_speedup.png" alt="Chain topology speedup plot" /><figcaption>Speedup for updates in chain topologies.</figcaption></figure>
           <figure><img src="assets/incremental_vs_recompute.png" alt="Incremental and recomputation timing plot" /><figcaption>Incremental update time compared with full recomputation.</figcaption></figure>
           <figure><img src="assets/enterprise_update_patterns.png" alt="Enterprise update pattern speedup plot" /><figcaption>Layered enterprise update pattern speedups.</figcaption></figure>
+          <figure><img src="assets/affected_region_vs_update_time.png" alt="Affected hosts versus update time plot" /><figcaption>Affected hosts compared with update latency where exact counts are available.</figcaption></figure>
         </div>
+      </section>
+
+      <section id="extensions" class="section">
+        <p class="eyebrow">Implemented Research Extensions</p>
+        <h2>Affected-Region Metrics</h2>
+        <div class="grid two">
+          <article class="card">
+            <h3>Why this matters</h3>
+            <p>
+              Wall-clock time alone does not explain whether an update was
+              localized or broad. Affected-region metrics compare before and
+              after snapshots to count changed derived facts and the hosts that
+              appear in those changes.
+            </p>
+            <div class="metric-flow">
+              <span>Base fact update</span>
+              <span>Changed derived facts</span>
+              <span>Affected hosts</span>
+              <span>Update latency</span>
+            </div>
+            <pre><code>let metrics = diff_derived_facts(&before, &after);</code></pre>
+          </article>
+          <article class="card">
+            <h3>Metric definitions</h3>
+            <table>
+              <thead><tr><th>Metric</th><th>Meaning</th><th>Why it matters</th></tr></thead>
+              <tbody>
+                <tr><td><code>changed_base_facts</code></td><td>Input facts inserted or removed.</td><td>Shows update size.</td></tr>
+                <tr><td><code>changed_derived_facts</code></td><td>Symmetric difference across derived outputs.</td><td>Shows semantic impact.</td></tr>
+                <tr><td><code>affected_hosts</code></td><td>Hosts mentioned in changed derived facts.</td><td>Approximates affected region size.</td></tr>
+              </tbody>
+            </table>
+            <p>
+              Current benchmark CSV rows include exact affected-host counts for
+              star and chain update patterns. More complex enterprise updates
+              leave this field blank until the benchmark harness records full
+              before/after derived fact sets for those scenarios.
+            </p>
+          </article>
+        </div>
+        <figure>
+          <img src="assets/affected_region_vs_update_time.png" alt="Affected-region metric plot" />
+          <figcaption>Affected-region plot generated from benchmark CSV rows with exact affected-host counts.</figcaption>
+        </figure>
       </section>
 
       <section id="claims" class="section">
@@ -289,16 +375,6 @@ cargo run --release --example run_benchmarks -- --csv docs/assets/benchmark_resu
           Required tools: Rust stable, Graphviz, Python 3 with matplotlib, and a
           LaTeX distribution with latexmk or pdflatex/bibtex.
         </p>
-      </section>
-
-      <section id="paper" class="section">
-        <p class="eyebrow">Paper</p>
-        <h2>Compiled Research Artifact</h2>
-        <div class="paper-actions">
-          <a class="button primary" href="assets/main.pdf">Download paper PDF</a>
-          <a class="button" href="assets/benchmark_results.csv">Download benchmark CSV</a>
-        </div>
-        <iframe src="assets/main.pdf" title="Dynamic Attack Graphs paper PDF"></iframe>
       </section>
 
       <section id="future" class="section">

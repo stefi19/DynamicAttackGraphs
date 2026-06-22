@@ -108,7 +108,8 @@ recomputation after the same update.
 
 The repository includes a standalone static website that explains the motivation,
 theory, architecture, rule translation, correctness validation, benchmarks,
-provenance, limitations, and paper artifact:
+provenance, implemented research extensions, limitations, and reproducibility
+workflow. It does not embed the paper PDF.
 
 ```bash
 open website/index.html
@@ -121,8 +122,10 @@ python3 -m http.server 8000
 open http://localhost:8000/website/
 ```
 
-The site uses the generated figures in `website/assets/` and links to the
-compiled paper at `website/assets/main.pdf`.
+The site uses the generated figures and benchmark CSV in `website/assets/`.
+It covers architecture, Datalog-style rules, Differential Dataflow translation,
+incremental update walkthroughs, correctness validation, benchmarks, provenance,
+affected-region metrics, and future work.
 
 ---
 
