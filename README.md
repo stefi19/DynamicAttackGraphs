@@ -104,6 +104,28 @@ recomputation after the same update.
 
 ---
 
+## Interactive Project Presentation
+
+The repository includes a standalone static website that explains the motivation,
+theory, architecture, rule translation, correctness validation, benchmarks,
+provenance, limitations, and paper artifact:
+
+```bash
+open website/index.html
+```
+
+or serve the repository locally:
+
+```bash
+python3 -m http.server 8000
+open http://localhost:8000/website/
+```
+
+The site uses the generated figures in `website/assets/` and links to the
+compiled paper at `website/assets/main.pdf`.
+
+---
+
 ## 🛠 Local Development
 
 ### Requirements
@@ -233,6 +255,9 @@ When any input changes, only affected derived facts are recomputed.
 src/
   schema.rs      - Data type definitions
   rules.rs       - Attack graph inference rules
+  engine.rs      - Shared engine data model and comparison helpers
+  engines/       - Full recompute, naive, and Differential wrappers
+  metrics.rs     - Affected-region update metrics
   naive.rs       - HashSet fixpoint evaluator for correctness checks
   parser.rs      - MulVAL-like .facts parser
   provenance.rs  - Explanation trees and DOT export

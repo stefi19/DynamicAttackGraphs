@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dynamic Attack Graphs using Differential Dataflow</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top">DynamicAttackGraphs</a>
+      <nav class="nav" aria-label="Main navigation">
+        <a href="#problem">Problem</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#correctness">Correctness</a>
+        <a href="#benchmarks">Benchmarks</a>
+        <a href="#paper">Paper</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero section">
+        <div class="hero-content">
+          <p class="eyebrow">Research prototype · Rust · Differential Dataflow</p>
+          <h1>Dynamic Attack Graphs using Differential Dataflow</h1>
+          <p class="hero-copy">
+            Incremental maintenance of a subset of MulVAL-style attack graph
+            rules. Instead of recomputing the full attack graph after every
+            patch, CVE, or firewall change, the prototype propagates signed
+            differences through a recursive dataflow computation.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="assets/main.pdf">Read the paper</a>
+            <a class="button" href="#benchmarks">View benchmarks</a>
+            <a class="button" href="#provenance">See provenance</a>
+            <a class="button" href="#reproduce">Reproduce results</a>
+          </div>
+        </div>
+        <figure class="hero-figure">
+          <img src="assets/graph_initial.png" alt="Initial attack graph visualization" />
+          <figcaption>Attack graph before a defensive update.</figcaption>
+        </figure>
+      </section>
+
+      <section id="problem" class="section split">
+        <div>
+          <p class="eyebrow">Motivation</p>
+          <h2>Why Dynamic Attack Graphs?</h2>
+          <p>
+            Attack graphs model how an attacker can move from an initial
+            position through reachable services and vulnerabilities toward a
+            target. They are useful for reasoning about patches, firewall
+            changes, and exposure paths, but real networks change constantly.
+          </p>
+          <p>
+            A full recomputation after every change is simple and defensible,
+            but it wastes work when the affected region is small. This project
+            investigates whether Differential Dataflow can maintain recursive
+            attack graph facts incrementally for a MulVAL-style rule subset.
+          </p>
+        </div>
+        <div class="diagram-card">
+          <div class="flow-row">
+            <span>Facts</span><span>Rules</span><span>Derived graph</span>
+          </div>
+          <div class="flow-row muted">
+            <span>+1 CVE</span><span>joins + recursion</span><span>new paths</span>
+          </div>
+          <div class="flow-row muted">
+            <span>-1 patch</span><span>signed diffs</span><span>removed paths</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="background" class="section">
+        <p class="eyebrow">Background</p>
+        <h2>MulVAL-Style Rules and Materialisation</h2>
+        <div class="grid two">
+          <article class="card">
+            <h3>Datalog intuition</h3>
+            <p>
+              Base facts describe hosts, services, firewall denials, attacker
+              starting positions, and goals. Rules derive materialised facts
+              such as code execution, owned machines, and reached goals.
+            </p>
+            <pre><code>execCode(A, Dst, P) :-
+  execCode(A, Src, _),
+  hacl(Src, Dst, Svc),
+  vulExists(Dst, _, Svc, P).</code></pre>
+          </article>
+          <article class="card">
+            <h3>Incremental maintenance</h3>
+            <p>
+              The accurate baseline is full recomputation after applying the
+              same update. Incremental maintenance is useful only when it
+              produces exactly the same derived facts faster for the workload
+              under test.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="differential" class="section">
+        <p class="eyebrow">Differential Dataflow</p>
+        <h2>Signed Differences Through Recursive Operators</h2>
+        <div class="pipeline">
+          <span>Input facts</span>
+          <span>map/filter</span>
+          <span>join</span>
+          <span>antijoin</span>
+          <span>iterate</span>
+          <span>derived facts</span>
+        </div>
+        <p>
+          Differential Dataflow represents updates as records with logical time
+          and signed multiplicity. Insertions contribute positive differences;
+          deletions contribute negative differences. The rule implementation
+          maps Datalog-style conjunctions to keyed joins, projections to maps,
+          stratified firewall negation to antijoins, recursion to iterative
+          dataflow, and duplicate removal to distinctness.
+        </p>
+      </section>
+
+      <section id="architecture" class="section">
+        <p class="eyebrow">Architecture</p>
+        <h2>Repository Modules</h2>
+        <div class="module-grid">
+          <article><strong>schema.rs</strong><span>base and derived fact types</span></article>
+          <article><strong>rules.rs</strong><span>Differential Dataflow rules</span></article>
+          <article><strong>parser.rs</strong><span>MulVAL-like .facts parser</span></article>
+          <article><strong>naive.rs</strong><span>HashSet fixpoint oracle</span></article>
+          <article><strong>engine.rs</strong><span>shared engine data model</span></article>
+          <article><strong>engines/</strong><span>full, naive, and dataflow wrappers</span></article>
+          <article><strong>metrics.rs</strong><span>affected-region diff metrics</span></article>
+          <article><strong>provenance.rs</strong><span>selected proof reconstruction</span></article>
+          <article><strong>benchmarks.rs</strong><span>synthetic benchmark scenarios</span></article>
+        </div>
+      </section>
+
+      <section id="model" class="section split">
+        <div>
+          <p class="eyebrow">Data Model</p>
+          <h2>Facts the Prototype Understands</h2>
+          <ul class="fact-list">
+            <li><code>vulExists(Host, CVE, Service, Privilege)</code></li>
+            <li><code>localVulExists(Host, CVE, Privilege)</code></li>
+            <li><code>hacl(Source, Destination, Service)</code></li>
+            <li><code>firewallDeny(Source, Destination, Service)</code></li>
+            <li><code>attackerLocated(Attacker, Host, Privilege)</code></li>
+            <li><code>attackGoal(Attacker, Target)</code></li>
+          </ul>
+        </div>
+        <div>
+          <h3>Derived Facts</h3>
+          <ul class="fact-list">
+            <li><code>effectiveAccess(Source, Destination, Service)</code></li>
+            <li><code>execCode(Attacker, Host, Privilege)</code></li>
+            <li><code>ownsMachine(Attacker, Host)</code></li>
+            <li><code>goalReached(Attacker, Target)</code></li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="walkthrough" class="section">
+        <p class="eyebrow">Incremental Update Walkthrough</p>
+        <h2>From Exposure to Patch Impact</h2>
+        <div class="timeline">
+          <article><span>1</span><strong>Initial state</strong><p>internet → web01 → db01 → admin01 is reachable through vulnerabilities.</p></article>
+          <article><span>2</span><strong>Patch or firewall update</strong><p>A vulnerability removal or firewall deny enters the dataflow as a signed update.</p></article>
+          <article><span>3</span><strong>Propagation</strong><p>Only dependent derived facts should change for localized scenarios.</p></article>
+        </div>
+        <div class="figure-grid">
+          <figure>
+            <img src="assets/graph_initial.png" alt="Attack graph before patch" />
+            <figcaption>Attack graph before vulnerability patch.</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/graph_final.png" alt="Attack graph after patch" />
+            <figcaption>Attack graph after removing the vulnerable entry point.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="parser" class="section">
+        <p class="eyebrow">Scenario Files</p>
+        <h2>MulVAL-Like Input Without Hardcoding Rust</h2>
+        <div class="grid two">
+          <pre><code>vulExists(web01, cve_2024_1234, https, user).
+localVulExists(web01, cve_2024_local, root).
+hacl(internet, web01, https).
+attackerLocated(eve, internet, user).
+attackGoal(eve, admin01).</code></pre>
+          <pre><code>remove(vulExists(web01, cve_2024_1234, https, user)).
+firewallDeny(internet, web01, https).</code></pre>
+        </div>
+      </section>
+
+      <section id="correctness" class="section">
+        <p class="eyebrow">Correctness Validation</p>
+        <h2>Every Incremental Result Must Match Recompute</h2>
+        <div class="invariant">
+          incremental_result_after_update == full_recomputation_result_after_update
+        </div>
+        <div class="grid three">
+          <article class="card"><h3>Full recomputation</h3><p>Applies the same update to base facts, rebuilds the computation, and acts as the main oracle.</p></article>
+          <article class="card"><h3>Naive fixpoint</h3><p>Uses simple HashSet iteration for small scenarios and validates the rule semantics independently.</p></article>
+          <article class="card"><h3>Randomized tests</h3><p>Seeded tests generate small networks and update sequences, then compare engine outputs after each update.</p></article>
+        </div>
+      </section>
+
+      <section id="provenance" class="section split">
+        <div>
+          <p class="eyebrow">Explainability</p>
+          <h2>Selected Provenance Trees</h2>
+          <p>
+            The provenance layer reconstructs one valid proof tree after
+            computation. It is separate from Differential Dataflow internals and
+            currently targets selected derived facts rather than enumerating all
+            minimal attack paths.
+          </p>
+          <pre><code>goalReached(eve, admin01)
+└── ownsMachine(eve, admin01)
+    └── execCode(eve, admin01, root)
+        ├── execCode(eve, db01, root)
+        ├── effectiveAccess(db01, admin01, smb)
+        └── vulExists(admin01, CVE-2024-8888, smb, root)</code></pre>
+        </div>
+        <figure>
+          <img src="assets/explanation_goal.png" alt="Graphviz provenance explanation tree" />
+          <figcaption>Reconstructed provenance tree for a selected goalReached fact.</figcaption>
+        </figure>
+      </section>
+
+      <section id="benchmarks" class="section">
+        <p class="eyebrow">Evaluation</p>
+        <h2>Benchmarks and Plots</h2>
+        <p>
+          The exact numbers depend on machine and runtime conditions. Regenerate
+          plots before reporting final numbers. Speedup is computed as full
+          recomputation after the same update divided by incremental update
+          time.
+        </p>
+        <div class="figure-grid">
+          <figure><img src="assets/star_speedup.png" alt="Star topology speedup plot" /><figcaption>Speedup for localized updates in star topologies.</figcaption></figure>
+          <figure><img src="assets/chain_speedup.png" alt="Chain topology speedup plot" /><figcaption>Speedup for updates in chain topologies.</figcaption></figure>
+          <figure><img src="assets/incremental_vs_recompute.png" alt="Incremental and recomputation timing plot" /><figcaption>Incremental update time compared with full recomputation.</figcaption></figure>
+          <figure><img src="assets/enterprise_update_patterns.png" alt="Enterprise update pattern speedup plot" /><figcaption>Layered enterprise update pattern speedups.</figcaption></figure>
+        </div>
+      </section>
+
+      <section id="claims" class="section">
+        <p class="eyebrow">Research Claims</p>
+        <h2>Claim Versus Evidence</h2>
+        <table>
+          <thead><tr><th>Supported claim</th><th>Evidence in repository</th></tr></thead>
+          <tbody>
+            <tr><td>Implemented MulVAL-style rules can be expressed in Differential Dataflow.</td><td>Rule implementation, parser scenarios, and correctness tests.</td></tr>
+            <tr><td>Localized updates can be faster than recomputation.</td><td>Benchmark CSV and plots generated from the runner.</td></tr>
+            <tr><td>Incremental output should match full recomputation.</td><td>Engine comparison tests and randomized correctness tests.</td></tr>
+            <tr><td>Selected attack paths can be explained.</td><td>Provenance tree reconstruction and Graphviz export.</td></tr>
+          </tbody>
+        </table>
+        <div class="note">
+          Not claimed: full MulVAL replacement, direct DRed/B/F implementation,
+          production scanner, or evaluation on real enterprise telemetry.
+        </div>
+      </section>
+
+      <section id="limitations" class="section">
+        <p class="eyebrow">Limitations</p>
+        <h2>Current Research Boundaries</h2>
+        <ul class="columns">
+          <li>Subset of MulVAL-style rules.</li>
+          <li>Simplified CVE and privilege semantics.</li>
+          <li>Synthetic or semi-synthetic benchmark topologies.</li>
+          <li>Single-machine research prototype setup.</li>
+          <li>Provenance reconstructs selected explanations after computation.</li>
+          <li>No live vulnerability scanner integration yet.</li>
+        </ul>
+      </section>
+
+      <section id="reproduce" class="section">
+        <p class="eyebrow">Reproducibility</p>
+        <h2>Regenerate the Results</h2>
+        <pre><code>cargo test
+cargo run --release --example run_benchmarks -- --csv docs/assets/benchmark_results.csv
+./scripts/generate_all_artifacts.sh</code></pre>
+        <p>
+          Required tools: Rust stable, Graphviz, Python 3 with matplotlib, and a
+          LaTeX distribution with latexmk or pdflatex/bibtex.
+        </p>
+      </section>
+
+      <section id="paper" class="section">
+        <p class="eyebrow">Paper</p>
+        <h2>Compiled Research Artifact</h2>
+        <div class="paper-actions">
+          <a class="button primary" href="assets/main.pdf">Download paper PDF</a>
+          <a class="button" href="assets/benchmark_results.csv">Download benchmark CSV</a>
+        </div>
+        <iframe src="assets/main.pdf" title="Dynamic Attack Graphs paper PDF"></iframe>
+      </section>
+
+      <section id="future" class="section">
+        <p class="eyebrow">Future Work</p>
+        <h2>Next Research Directions</h2>
+        <ul class="columns">
+          <li>Souffle and DRed-style baselines.</li>
+          <li>Richer MulVAL rule coverage, credentials, and data access goals.</li>
+          <li>Probabilistic attack graph extensions.</li>
+          <li>Multi-worker Differential Dataflow evaluation.</li>
+          <li>Integration with real scanner and CMDB feeds.</li>
+          <li>Interactive dashboard for live what-if analysis.</li>
+        </ul>
+      </section>
+    </main>
+
+    <div class="lightbox" hidden>
+      <button type="button" aria-label="Close image preview">Close</button>
+      <img alt="" />
+      <p></p>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
