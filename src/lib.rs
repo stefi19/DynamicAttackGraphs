@@ -3,6 +3,7 @@
 
 pub mod benchmarks;
 pub mod engine;
+pub mod engines;
 pub mod naive;
 pub mod parser;
 pub mod provenance;
@@ -11,6 +12,7 @@ pub mod schema;
 
 pub use benchmarks::*;
 pub use engine::*;
+pub use engines::*;
 pub use naive::*;
 pub use parser::*;
 pub use provenance::*;
